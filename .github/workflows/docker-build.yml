@@ -1,4 +1,4 @@
-name: "docker-build"
+name: "Docker Build & Deploy"
 on:
   pull_request:
   push:

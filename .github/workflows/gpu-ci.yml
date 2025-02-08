@@ -1,4 +1,4 @@
-name: "gpu-ci"
+name: "GPU-based Tests"
 on:
   push:
     branches:
@@ -22,26 +22,32 @@ jobs:
       image: ghcr.io/flexflow/flexflow-environment-cuda-12.2:latest
       options: --gpus all --shm-size=8192m
     steps:
+      - name: Display NVIDIA SMI and NVCC details
+        run: |
+          nvidia-smi
+          nvidia-smi -L
+          nvidia-smi -q -d Memory
+          nvcc --version
+      
+      - name: Display disk space
+        run: df -h
+      
       - name: Install updated git version
         run: sudo add-apt-repository ppa:git-core/ppa -y && sudo apt update -y && sudo apt install -y --no-install-recommends git
 
       - name: Checkout Git Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
           
       - name: Install conda and FlexFlow dependencies
-        uses: conda-incubator/setup-miniconda@v2
+        uses: conda-incubator/setup-miniconda@v3
         with:
           miniconda-version: "latest"
           activate-environment: flexflow
           environment-file: conda/flexflow.yml
           auto-activate-base: false
           auto-update-conda: false
-
-      - name: Install conda and Pytorch dependencies for pytorch alignment test
-        run: |
-          conda env create -f conda/flexflow.yml
 
       - name: Build FlexFlow
         run: |
@@ -81,19 +87,29 @@ jobs:
       CONDA: "3"
       HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
     container:
-      image: ghcr.io/flexflow/flexflow-environment-cuda-12.1:latest
+      image: ghcr.io/flexflow/flexflow-environment-cuda-12.2:latest
       options: --gpus all --shm-size=8192m
     steps:
+      - name: Display NVIDIA SMI and NVCC details
+        run: |
+          nvidia-smi
+          nvidia-smi -L
+          nvidia-smi -q -d Memory
+          nvcc --version
+      
+      - name: Display disk space
+        run: df -h
+      
       - name: Install updated git version
         run: sudo add-apt-repository ppa:git-core/ppa -y && sudo apt update -y && sudo apt install -y --no-install-recommends git
 
       - name: Checkout Git Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
           
       - name: Install conda and FlexFlow dependencies
-        uses: conda-incubator/setup-miniconda@v2
+        uses: conda-incubator/setup-miniconda@v3
         with:
           miniconda-version: "latest"
           activate-environment: flexflow
