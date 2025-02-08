@@ -19,7 +19,7 @@ jobs:
     env: 
       CONDA: "3"
     container:
-      image: ghcr.io/flexflow/flexflow-environment-cuda-12.1:latest
+      image: ghcr.io/flexflow/flexflow-environment-cuda-12.2:latest
       options: --gpus all --shm-size=8192m
     steps:
       - name: Install updated git version
@@ -138,7 +138,7 @@ jobs:
           tar -zcvf output.tar.gz ./output
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: output

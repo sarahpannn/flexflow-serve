@@ -9,3 +9,6 @@ runners:
   gpu-nvidia:
     family: ["g4dn.12xlarge"]
     image: dlami-x64
+  rocm-builder:
+    family: ["c4.8xlarge"]
+    image: dlami-x64
