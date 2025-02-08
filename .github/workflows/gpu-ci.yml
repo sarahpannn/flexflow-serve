@@ -115,6 +115,7 @@ jobs:
           activate-environment: flexflow
           environment-file: conda/flexflow.yml
           auto-activate-base: false
+          auto-update-conda: false
 
       - name: Build FlexFlow
         run: |
