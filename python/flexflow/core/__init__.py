@@ -38,6 +38,7 @@ ff_arg_to_sysarg = {
     "num_gpus": "-ll:gpu",
     "memory_per_gpu": "-ll:fsize",
     "zero_copy_memory_per_node": "-ll:zsize",
+    "cpu_memory_per_node": "-ll:csize",
     "num_cpus": "-ll:cpu",
     "legion_utility_processors": "-ll:util",
     "log_instance_creation": "--log-instance-creation",
