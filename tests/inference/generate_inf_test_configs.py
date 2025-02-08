@@ -6,8 +6,8 @@ from collections import namedtuple
 ff_init_configs = {
     # required parameters
     "num_gpus": 4,
-    "memory_per_gpu": 20000,
-    "zero_copy_memory_per_node": 50000,
+    "memory_per_gpu": 14000,
+    "zero_copy_memory_per_node": 40000,
     # optional parameters
     "num_cpus": 8,
     "legion_utility_processors": 8,

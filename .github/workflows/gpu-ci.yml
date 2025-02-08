@@ -10,33 +10,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  gpu-ci-concierge:
-    name: GPU CI Concierge
-    runs-on: ubuntu-20.04
-    env:
-      FLEXFLOW_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - name: Checkout Git Repository
-        uses: actions/checkout@v3
-
-      - name: Wait for daemon to be done
-        run: |
-          pip3 install pip --upgrade
-          pip3 install pyopenssl --upgrade
-          pip3 install urllib3 --upgrade
-          pip3 install pygithub
-          python3 .github/workflows/helpers/gpu_ci_helper.py
-  
   python-interface-check:
     name: Check Python Interface
-    if: ${{ github.event_name != 'schedule' }}
-    runs-on: [self-hosted, gpu]
+    runs-on: "runs-on=${{ github.run_id }}/runner=gpu-nvidia"
     defaults:
       run:
         shell: bash -l {0} # required to use an activated conda environment
     env: 
-      CONDA: "3"    
-    needs: gpu-ci-concierge
+      CONDA: "3"
     container:
       image: ghcr.io/flexflow/flexflow-environment-cuda-12.1:latest
       options: --gpus all --shm-size=8192m
@@ -92,15 +73,13 @@ jobs:
 
   inference-tests:
     name: Inference Tests
-    if: ${{ github.event_name != 'schedule' }}
-    runs-on: [self-hosted, gpu]
+    runs-on: "runs-on=${{ github.run_id }}/runner=gpu-nvidia"
     defaults:
       run:
         shell: bash -l {0} # required to use an activated conda environment
     env: 
       CONDA: "3"
       HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
-    needs: gpu-ci-concierge
     container:
       image: ghcr.io/flexflow/flexflow-environment-cuda-12.1:latest
       options: --gpus all --shm-size=8192m
@@ -137,9 +116,6 @@ jobs:
           export CUDNN_DIR=/usr/local/cuda
           export CUDA_DIR=/usr/local/cuda
           export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
-          
-          # GPT tokenizer test
-          # ./tests/gpt_tokenizer_test.sh
 
           # Inference tests
           source ./build/set_python_envs.sh
