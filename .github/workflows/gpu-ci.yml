@@ -25,8 +25,10 @@ jobs:
       - name: Display NVIDIA SMI and NVCC details
         run: |
           nvidia-smi
-          nvidia-smi -L
-          nvidia-smi -q -d Memory
+          # nvidia-smi -L
+          # nvidia-smi -q -d Memory
+          printenv
+          ls /usr/local/cuda/bin
           nvcc --version
       
       - name: Display disk space
