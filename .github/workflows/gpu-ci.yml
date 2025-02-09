@@ -134,6 +134,10 @@ jobs:
           export CUDA_DIR=/usr/local/cuda
           export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
 
+          echo $PWD
+          ls -la
+          ls -la ..
+
           # Inference tests
           source ./build/set_python_envs.sh
           ./tests/inference_tests.sh
