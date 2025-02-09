@@ -13,11 +13,11 @@ jobs:
   python-interface-check:
     name: Check Python Interface
     runs-on: "runs-on=${{ github.run_id }}/runner=gpu-nvidia"
-    defaults:
-      run:
-        shell: bash -l {0} # required to use an activated conda environment
-    env: 
-      CONDA: "3"
+    # defaults:
+    #   run:
+    #     shell: bash -l {0} # required to use an activated conda environment
+    # env: 
+    #   CONDA: "3"
     # container:
     #   image: ghcr.io/flexflow/flexflow-environment-cuda-12.2:latest
     #   options: --gpus all --shm-size=8192m
