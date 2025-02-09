@@ -24,14 +24,7 @@ import warnings
 from typing import Optional
 
 from flexflow.config import *
-
-# check which python binding to use
-if flexflow_python_binding() == "pybind11":
-    # print("Using pybind11 flexflow bindings.")
-    from .flexflow_pybind11 import *
-else:
-    # print("Using cffi flexflow bindings.")
-    from .flexflow_cffi import *
+from .flexflow_cffi import *
 
 ff_arg_to_sysarg = {
     # General args

@@ -2,11 +2,6 @@
 set -x
 set -e
 
-check_python_interface() {
-	# Usage: check_python_interface {before-installation, after-installation}
-	python $FF_HOME/inference/python/incr_decoding.py
-}
-
 
 FF_HOME="$(realpath "${BASH_SOURCE[0]%/*}/..")"
 export FF_HOME
@@ -26,14 +21,14 @@ if [[ "$installation_status" == "before-installation" ]]; then
 	# Run simple python inference test
 	export LD_LIBRARY_PATH="${BUILD_FOLDER}:${BUILD_FOLDER}/deps/legion/lib:${LD_LIBRARY_PATH}"
 	export PYTHONPATH="${FF_HOME}/python:${BUILD_FOLDER}/deps/legion/bindings/python:${PYTHONPATH}"
-	python $FF_HOME/inference/python/incr_decoding.py
+	python "$FF_HOME"/inference/python/incr_decoding.py
 	unset PYTHONPATH
 	unset LD_LIBRARY_PATH
 elif [[ "$installation_status" == "after-installation" ]]; then
 	# Check availability of flexflow modules in Python
 	python -c "import flexflow.core; import flexflow.serve as ff; exit()"
 	# Run simple python inference test
-	python $FF_HOME/inference/python/incr_decoding.py
+	python "$FF_HOME"/inference/python/incr_decoding.py
 else
 	echo "Invalid installation status!"
 	echo "Usage: $0 {before-installation, after-installation}"

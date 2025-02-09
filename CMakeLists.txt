@@ -410,14 +410,13 @@ if (NOT FF_BUILD_FROM_PYPI)
     COMMAND CMAKE_BUILD_DIR=${Legion_BINARY_DIR}/runtime CMAKE_INSTALL_PREFIX=${Legion_BINARY_DIR} ${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/deps/legion/bindings/python/setup.py build --build-lib=${Legion_BINARY_DIR}/bindings/python ${Legion_PYTHON_EXTRA_INSTALL_ARGS}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/deps/legion/bindings/python
   )
-  # create flexflow_python interpreter. When building from pip, we install the FF_HOME/python/flexflow_python script instead.
+  # create set_python_envs.sh script
   add_custom_command(TARGET flexflow
     PRE_BUILD	
     COMMAND ${Python_EXECUTABLE} ${FLEXFLOW_ROOT}/python/flexflow_python_build.py --build-dir ${CMAKE_BINARY_DIR}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Creating flexflow_python interpreter..."
+    COMMENT "Creating set_python_envs.sh interpreter..."
   )
-  install(PROGRAMS ${CMAKE_BINARY_DIR}/flexflow_python DESTINATION "bin")
 endif()
 
 if (INFERENCE_TESTS)
