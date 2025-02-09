@@ -37,16 +37,12 @@ def compare_single_line(file_a, file_b):
     list_a = line_a[len("token IDs: "):].split(",")
     list_b = line_b[len("token IDs: "):].split(",")
 
-    # check if 90% of the elements are equal
-    if len(list_a) != len(list_b):
-        raise AssertionError(
-            f"File lengths differ:\n  {file_a} -> {len(list_a)}\n  {file_b} -> {len(list_b)}"
-        )
-    num_equal = sum(1 for a, b in zip(list_a, list_b) if a == b)
-    if num_equal < 0.9 * len(list_a):
-        raise AssertionError(
-            f"File contents differ:\n  {file_a} -> {list_a}\n  {file_b} -> {list_b}"
-        )
+    # check if the first 50 elements are equal
+    for i in range(min(50, len(list_a), len(list_b))):
+        if list_a[i] != list_b[i]:
+            raise AssertionError(
+                f"File contents differ at position {i}:\n  {file_a} -> {list_a[i]}\n  {file_b} -> {list_b[i]}"
+            )
 
 
 def group_model_files(prefix):

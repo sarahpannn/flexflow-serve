@@ -13,34 +13,37 @@ jobs:
   python-interface-check:
     name: Check Python Interface
     runs-on: "runs-on=${{ github.run_id }}/runner=gpu-nvidia"
-    # defaults:
-    #   run:
-    #     shell: bash -l {0} # required to use an activated conda environment
-    # env: 
-    #   CONDA: "3"
-    # container:
-    #   image: ghcr.io/flexflow/flexflow-environment-cuda-12.2:latest
-    #   options: --gpus all --shm-size=8192m
+    defaults:
+      run:
+        shell: bash -l {0} # required to use an activated conda environment
+    env:
+      CUDA_PATH: /usr/local/cuda
+      CONDA: "3"
+      HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
     steps:
-      - name: Display NVIDIA SMI and NVCC details
-        run: |
-          nvidia-smi
-          # nvidia-smi -L
-          # nvidia-smi -q -d Memory
-          printenv
-          ls /usr/local/cuda/bin
-          nvcc --version
+      - name: Set Path
+        run: echo "/opt/amazon/openmpi/bin:/opt/amazon/efa/bin:/opt/conda/bin:/usr/local/cuda/bin:/usr/local/cuda/include" >> $GITHUB_PATH
       
-      - name: Display disk space
-        run: df -h
+      # - name: Check GPU/CUDA availability
+      #   run: |
+      #     printenv CUDA_PATH
+      #     printenv PATH
+      #     printenv LD_LIBRARY_PATH
+      #     nvidia-smi
+      #     nvcc --version
+      # - name: Display disk space
+      #   run: df -h
       
-      - name: Install updated git version
-        run: sudo add-apt-repository ppa:git-core/ppa -y && sudo apt update -y && sudo apt install -y --no-install-recommends git
-
       - name: Checkout Git Repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
+      
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
           
       - name: Install conda and FlexFlow dependencies
         uses: conda-incubator/setup-miniconda@v3
@@ -50,34 +53,25 @@ jobs:
           environment-file: conda/flexflow.yml
           auto-activate-base: false
           auto-update-conda: false
-
+          
       - name: Build FlexFlow
         run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
           mkdir build
           cd build
           ../config/config.linux
           make -j
 
       - name: Check FlexFlow Python interface (before installation)
-        run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
-          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
-          ./tests/python_interface_test.sh before-installation
+        run: ./tests/python_interface_test.sh before-installation
 
       - name: Install FlexFlow
         run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
           cd build
           ../config/config.linux
           make install
-          ldconfig
 
       - name: Check FlexFlow Python interface (after installation)
-        run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
-          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
-          ./tests/python_interface_test.sh after-installation
+        run: ./tests/python_interface_test.sh after-installation
 
   inference-tests:
     name: Inference Tests
@@ -85,30 +79,34 @@ jobs:
     defaults:
       run:
         shell: bash -l {0} # required to use an activated conda environment
-    env: 
+    env:
+      CUDA_PATH: /usr/local/cuda
       CONDA: "3"
       HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
-    # container:
-    #   image: ghcr.io/flexflow/flexflow-environment-cuda-12.2:latest
-    #   options: --gpus all --shm-size=8192m
     steps:
-      - name: Display NVIDIA SMI and NVCC details
-        run: |
-          nvidia-smi
-          nvidia-smi -L
-          nvidia-smi -q -d Memory
-          nvcc --version
+      - name: Set Path
+        run: echo "/opt/amazon/openmpi/bin:/opt/amazon/efa/bin:/opt/conda/bin:/usr/local/cuda/bin:/usr/local/cuda/include" >> $GITHUB_PATH
       
-      - name: Display disk space
-        run: df -h
-      
-      - name: Install updated git version
-        run: sudo add-apt-repository ppa:git-core/ppa -y && sudo apt update -y && sudo apt install -y --no-install-recommends git
+      # - name: Check GPU/CUDA availability
+      #   run: |
+      #     printenv CUDA_PATH
+      #     printenv PATH
+      #     printenv LD_LIBRARY_PATH
+      #     nvidia-smi
+      #     nvcc --version
+      # - name: Display disk space
+      #   run: df -h
 
       - name: Checkout Git Repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
+      
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
           
       - name: Install conda and FlexFlow dependencies
         uses: conda-incubator/setup-miniconda@v3
@@ -121,7 +119,6 @@ jobs:
 
       - name: Build FlexFlow
         run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
           mkdir build
           cd build
           ../config/config.linux
@@ -131,22 +128,11 @@ jobs:
         env:
           CPP_INFERENCE_TESTS: ${{ vars.CPP_INFERENCE_TESTS }}
         run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
-          export CUDNN_DIR=/usr/local/cuda
-          export CUDA_DIR=/usr/local/cuda
-          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
-
-          # Inference tests
           source ./build/set_python_envs.sh
           ./tests/inference_tests.sh
       
       - name: Run PEFT tests
         run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
-          export CUDNN_DIR=/usr/local/cuda
-          export CUDA_DIR=/usr/local/cuda
-          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
-
           source ./build/set_python_envs.sh
           ./tests/peft_test.sh
       
