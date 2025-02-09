@@ -2,8 +2,7 @@ images:
   dlami-x64:
     platform: "linux"
     arch: "x64"
-    owner: "898082745236" # AWS
-    name: "Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.5 (Ubuntu 22.04)*"
+    ami: "ami-04a2add47e78915e6"
 
 runners:
   gpu-nvidia:
