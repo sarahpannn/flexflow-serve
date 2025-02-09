@@ -18,9 +18,9 @@ jobs:
         shell: bash -l {0} # required to use an activated conda environment
     env: 
       CONDA: "3"
-    container:
-      image: ghcr.io/flexflow/flexflow-environment-cuda-12.2:latest
-      options: --gpus all --shm-size=8192m
+    # container:
+    #   image: ghcr.io/flexflow/flexflow-environment-cuda-12.2:latest
+    #   options: --gpus all --shm-size=8192m
     steps:
       - name: Display NVIDIA SMI and NVCC details
         run: |
@@ -86,9 +86,9 @@ jobs:
     env: 
       CONDA: "3"
       HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
-    container:
-      image: ghcr.io/flexflow/flexflow-environment-cuda-12.2:latest
-      options: --gpus all --shm-size=8192m
+    # container:
+    #   image: ghcr.io/flexflow/flexflow-environment-cuda-12.2:latest
+    #   options: --gpus all --shm-size=8192m
     steps:
       - name: Display NVIDIA SMI and NVCC details
         run: |
@@ -133,10 +133,6 @@ jobs:
           export CUDNN_DIR=/usr/local/cuda
           export CUDA_DIR=/usr/local/cuda
           export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
-
-          echo $PWD
-          ls -la
-          ls -la ..
 
           # Inference tests
           source ./build/set_python_envs.sh
