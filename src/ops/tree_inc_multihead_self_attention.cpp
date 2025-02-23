@@ -615,24 +615,24 @@ void inference_kernel(TreeIncMultiHeadSelfAttentionMeta *m,
 
   // After commit we update m->num_active_infr_tokens to be the number of active
   // tokens for the current batch
-  m->num_active_infr_tokens = bc->num_active_infr_tokens();
+  m->num_active_infr_tokens = bc->num_active_tokens();
 
   // phase 0: copy calculated qkv into devQKVProjArray
   // [qProjSize, num_heads, 3, num_new_tokens]
   size_t qkv_proj_size =
       m->qProjSize * m->num_q_heads * QKV_WEIGHT_NUM * bc->num_active_tokens();
 
-  hipMemcpyAsync(m->devQKVProjArray,
-                 qkv_ptr,
-                 qkv_proj_size *
-                     sizeof(DT), // is this right, do we need layers etc here
-                 hipMemcpyDeviceToDevice,
-                 stream);
+  checkCUDA(hipMemcpyAsync(
+      m->devQKVProjArray,
+      qkv_ptr,
+      qkv_proj_size * sizeof(DT), // is this right, do we need layers etc here
+      hipMemcpyDeviceToDevice,
+      stream));
 
   // phase 1: Implement kernel to compute KQV for input tokens
   // TODO WARNING: this is commented out only because we are fixing the inc_attn
   // first
-  compute_qkv_kernel(
+  apply_scaling_and_rotary(
       m, bc, shard_id, static_cast<DT *>(m->devQKVProjArray), stream);
 
   // phase 2: No need to update key/val cache
