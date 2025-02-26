@@ -2,13 +2,21 @@
 set -x
 set -e
 
-MODEL_NAME=${MODEL_NAME:-"JackFram/llama-160m"}
+MODEL_NAME=${MODEL_NAME:-"meta-llama/Llama-3.2-1B-Instruct"}
 MEMORY_PER_GPU=${MEMORY_PER_GPU:-14000}
 ZCOPY_MEMORY=${ZCOPY_MEMORY:-40000}
 TP_DEGREE=${TP_DEGREE:-2}
 PP_DEGREE=${PP_DEGREE:-2}
 CACHE_PATH=${FF_CACHE_PATH:-"~/.cache/flexflow"}
 NUM_STEPS=${NUM_STEPS:-2}
+FULL_PRECISION=${FULL_PRECISION:-true}
+FUSION=${FUSION:-true}
+
+# Token to access private huggingface models (e.g. LLAMA-2)
+HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN:-none}
+if [[ "$HUGGINGFACE_TOKEN" != "none" ]]; then
+    huggingface-cli login --token "$HUGGINGFACE_TOKEN"
+fi
 
 cleanup() {
     eval rm -rf "${CACHE_PATH}/debug" ./fine_grained_alignment_config.json ./inference/output/fine_grained_alignment_test_ff.txt ./inference/output/fine_grained_alignment_test_hf.txt
@@ -30,7 +38,7 @@ mkdir -p ./inference/output
 # Enable backtrace in case we run into a segfault or assertion failure
 export LEGION_BACKTRACE=1
 export FF_DEBG_NO_WEIGHTS=1
-FUSION=true
+
 
 
 # Check if the Python code executed successfully
@@ -48,13 +56,13 @@ fi
 
 MAX_LENGTH=$((PROMPT_LENGTH + NUM_STEPS + 1))
 
+if [ "$FULL_PRECISION" = "true" ]; then full_precision_flag="--use-full-precision"; else full_precision_flag=""; fi
 python ./tests/inference/huggingface_inference.py \
     --model-name "${MODEL_NAME}" \
     --max-length "${MAX_LENGTH}" \
     --prompt-file ../../inference/prompt/test.json \
-    --output-file ../../inference/output/fine_grained_alignment_test_hf.txt \
-    --use-full-precision \
-    --inference-debugging
+    --output-file ../../inference/output/fine_grained_alignment_test_hf.json \
+    "${full_precision_flag}" --inference-debugging
 
 NUM_GPUS=$((TP_DEGREE * PP_DEGREE))
 json_config=$(cat <<-END
@@ -72,10 +80,10 @@ json_config=$(cat <<-END
         "refresh_cache": false,
         "llm_model": "${MODEL_NAME}",
         "cache_path": "${CACHE_PATH}",
-        "full_precision": true,
+        "full_precision": ${FULL_PRECISION},
         "prompt": "./inference/prompt/test.json",
         "max_length": $MAX_LENGTH,
-        "output_file": "./inference/output/fine_grained_alignment_test_ff.txt"
+        "output_file": "./inference/output/fine_grained_alignment_test_ff.json"
     }
 END
 )

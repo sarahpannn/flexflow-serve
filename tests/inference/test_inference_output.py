@@ -1,48 +1,51 @@
 import os
-import re
 import glob
 import pytest
+import json
 
 OUTPUT_DIR = os.path.join("inference", "output")
 
-def get_line(filepath, line_index):
+def compare_output_tokens(file1, file2):
     """
-    Returns the specified line (0-based) from the file, or '' if the file
-    doesn't have that many lines.
+    Open two JSON files (each containing a list of dictionaries), check that they have the same number
+    of dictionaries, sort them by 'req_idx', and then for each matching req_idx, compare the first 50
+    output_tokens (or all tokens if fewer than 50). The output_tokens are stored as a comma-separated
+    string of integers under the "output_tokens" key.
     """
-    with open(filepath, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-    return lines[line_index] if len(lines) > line_index else ""
-
-def compare_single_line(file_a, file_b):
-    """
-    Compare a single line in two files:
-      - If filename starts with 'spec_infer' or 'incr_dec', compare line index = 1 (2nd line).
-      - If filename starts with 'huggingface_', compare line index = 0 (1st line).
-    Raise AssertionError if they differ.
-    """
-    base_a = os.path.basename(file_a)
-    base_b = os.path.basename(file_b)
-
-    if base_a.startswith(("spec_infer", "incr_dec")):
-        line_a = get_line(file_a, 1)
-    else:
-        line_a = get_line(file_a, 0)
-
-    if base_b.startswith(("spec_infer", "incr_dec")):
-        line_b = get_line(file_b, 1)
-    else:
-        line_b = get_line(file_b, 0)
-
-    list_a = line_a[len("token IDs: "):].split(",")
-    list_b = line_b[len("token IDs: "):].split(",")
-
-    # check if the first 50 elements are equal
-    for i in range(min(50, len(list_a), len(list_b))):
-        if list_a[i] != list_b[i]:
-            raise AssertionError(
-                f"File contents differ at position {i}:\n  {file_a} -> {list_a[i]}\n  {file_b} -> {list_b[i]}"
-            )
+    # Helper function to convert a comma-separated string of integers into a list of ints.
+    def parse_tokens(token_str):
+        return [int(tok.strip()) for tok in token_str.split(',') if tok.strip()]
+    
+    # Load both JSON files.
+    with open(file1, 'r') as f1, open(file2, 'r') as f2:
+        data1 = json.load(f1)
+        data2 = json.load(f2)
+    
+    # Check that both files have the same number of dictionaries.
+    if len(data1) != len(data2):
+        raise ValueError("Error: Files do not have the same number of dictionaries.")
+    
+    # Sort both lists by the 'req_idx' key.
+    data1_sorted = sorted(data1, key=lambda d: d['req_idx'])
+    data2_sorted = sorted(data2, key=lambda d: d['req_idx'])
+    
+    # Compare each pair of dictionaries.
+    for d1, d2 in zip(data1_sorted, data2_sorted):
+        req_idx1 = d1.get('req_idx')
+        req_idx2 = d2.get('req_idx')
+        
+        # Verify that req_idx values match.
+        if req_idx1 != req_idx2:
+            raise ValueError(f"Mismatch in req_idx: {req_idx1} vs {req_idx2}")
+        
+        # Parse the output tokens from the comma-separated strings.
+        tokens1 = parse_tokens(d1.get('output_tokens', ''))
+        tokens2 = parse_tokens(d2.get('output_tokens', ''))
+        
+        # Determine the number of tokens to compare.
+        num_to_compare = min(30, len(tokens1), len(tokens2))
+        if tokens1[:num_to_compare] != tokens2[:num_to_compare]:
+            raise ValueError(f"Output tokens mismatch for req_idx {req_idx1} at idx {num_to_compare}/{len(tokens1)}:")
 
 
 def group_model_files(prefix):
@@ -68,7 +71,7 @@ def collect_file_comparisons():
     """
     Yields tuples (file_a, file_b) for all pairwise comparisons among
     spec_infer or incr_dec files that share a model name,
-    plus the comparison with huggingface_<model_name>.txt if it exists.
+    plus the comparison with huggingface_<model_name>.json if it exists.
     """
     for prefix in ["spec_infer", "incr_dec"]:
         grouped = group_model_files(prefix)
@@ -77,28 +80,18 @@ def collect_file_comparisons():
             for i in range(len(file_group)):
                 for j in range(i+1, len(file_group)):
                     yield file_group[i], file_group[j]
-            # Compare with huggingface_<model_name>.txt
-            hf_file = os.path.join(OUTPUT_DIR, f"huggingface_{model_name}.txt")
+            # Compare with huggingface_<model_name>.json
+            hf_file = os.path.join(OUTPUT_DIR, f"huggingface_{model_name}.json")
             if os.path.exists(hf_file) and file_group:
                 yield file_group[0], hf_file
 
-
-def _extract_llm_decoding_steps(line):
-    """
-    Given a string like:
-      [Profile] guid(26516) llm_decoding_steps(69) latency(123456)
-    parse and return the integer after llm_decoding_steps(...).
-    Return None if not found.
-    """
-    match = re.search(r'llm_decoding_steps\((\d+)\)', line)
-    return int(match.group(1)) if match else None
 
 def collect_spec_infer_incr_dec_pairs():
     """
     Yields (spec_file, incr_file) for files that have the same trailing name
     after the prefix spec_infer- / incr_dec-.
     """
-    all_files = glob.glob(os.path.join(OUTPUT_DIR, "*.*"))  # .txt/.json
+    all_files = glob.glob(os.path.join(OUTPUT_DIR, "*.*"))  # .json/.json
     spec_infer = {}
     for f in all_files:
         base = os.path.basename(f)
@@ -118,7 +111,7 @@ def test_output_alignment(file_a, file_b):
     """
     Each file pair is tested and reported separately.
     """
-    compare_single_line(file_a, file_b)
+    compare_output_tokens(file_a, file_b)
 
 
 
@@ -126,26 +119,40 @@ def test_output_alignment(file_a, file_b):
                          ids=lambda f: os.path.basename(f))
 def test_decoding_steps(spec_file, incr_file):
     """
-    For each matching pair (same suffix), compare the first line:
-    "[Profile] guid(...) llm_decoding_steps(...) latency(...)"
-    Ensure that spec_infer's llm_decoding_steps is <= incr_dec's steps / 1.5.
+    Open two JSON files (each containing a list of dictionaries), check that they have the same number
+    of dictionaries, sort them by 'req_idx', and then for each matching req_idx, check that the 
+    value of 'num_decoding_steps' in spec_file is <= the corresponding value in incr_file / 1.5 times.
     """
-    with open(spec_file, "r", encoding="utf-8") as fs:
-        spec_line = fs.readline()
-    with open(incr_file, "r", encoding="utf-8") as fi:
-        incr_line = fi.readline()
+    # Load JSON data from both files.
+    with open(spec_file, 'r') as f1, open(incr_file, 'r') as f2:
+        spec_data = json.load(f1)
+        inc_data = json.load(f2)
+    
+    # Verify that both files contain the same number of dictionaries.
+    if len(spec_data) != len(inc_data):
+        print("Error: Files do not have the same number of dictionaries.")
+        return
 
-    spec_steps = _extract_llm_decoding_steps(spec_line)
-    incr_steps = _extract_llm_decoding_steps(incr_line)
-
-    # If we don't have valid numbers in one or both lines, skip
-    if spec_steps is None or incr_steps is None:
-        pytest.skip(f"No valid llm_decoding_steps found in {spec_file} or {incr_file}")
-
-    # Check ratio
-    if not (spec_steps <= incr_steps / 1.5):
-        raise AssertionError(
-            f"[{os.path.basename(spec_file)} vs {os.path.basename(incr_file)}] "
-            f"spec_infer has llm_decoding_steps={spec_steps}, which is not "
-            f"<= incr_dec steps={incr_steps}/1.5 = {incr_steps/1.5:.1f}"
-        )
+    # Sort both lists by the 'req_idx' key.
+    data1_sorted = sorted(spec_data, key=lambda d: d['req_idx'])
+    data2_sorted = sorted(inc_data, key=lambda d: d['req_idx'])
+    
+    # Compare each pair of dictionaries.
+    for d1, d2 in zip(data1_sorted, data2_sorted):
+        req_idx_spec = d1.get('req_idx')
+        req_idx_inc_dec = d2.get('req_idx')
+        
+        # Ensure the req_idx values match.
+        if req_idx_spec != req_idx_inc_dec:
+            raise ValueError(f"Mismatch in req_idx: {req_idx_spec} vs {req_idx_inc_dec}")
+        
+        # Get the num_decoding_steps values.
+        steps_spec = d1.get('num_decoding_steps')
+        steps_inc_dec = d2.get('num_decoding_steps')
+        
+        if steps_spec is None or steps_inc_dec is None:
+            raise ValueError(f"Missing 'num_decoding_steps' for req_idx {req_idx_spec}")
+        
+        # Check if steps1 is <= 1.5 times steps2.
+        if not (steps_spec <= steps_inc_dec / 1.5):
+            raise ValueError(f"req_idx {req_idx_spec}: {steps_spec} speculation steps, which is not <= {steps_inc_dec} / 1.5")

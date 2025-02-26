@@ -19,7 +19,6 @@ ff_init_configs = {
     "use_4bit_quantization": False,
     "use_8bit_quantization": False,
     "enable_peft": False,
-    "peft_activation_reserve_space_size": 1024, # 1GB
     "profiling": False,
     "benchmarking": False,
     "inference_debugging": False,
@@ -34,7 +33,7 @@ llm_configs = {
     "full_precision": True,
     "prompt": "",
     "output_file": "",
-    "max_length": 128,
+    "max_length": 255,
 }
 ssm_configs = {
     "ssms": [
@@ -70,7 +69,7 @@ def gen_incr_dec_configs(prompt_file, output_folder, incr_dec_models, parallelis
                     + f"{tp}_tp_{pp}_pp"
                 )
                 test_configs_file = os.path.join(config_output_folder, f"{filename}.json")
-                output_file = os.path.join(output_folder, filename + ".txt")
+                output_file = os.path.join(output_folder, filename + ".json")
 
                 ff_init_configs["tensor_parallelism_degree"] = tp
                 ff_init_configs["pipeline_parallelism_degree"] = pp
@@ -99,7 +98,7 @@ def gen_spec_configs(prompt_file, output_folder, specinfer_model_pairs, parallel
                     + f"{tp}_tp_{pp}_pp"
                 )
                 test_configs_file = os.path.join(config_output_folder, f"{filename}.json")
-                output_file = os.path.join(output_folder, filename + ".txt")
+                output_file = os.path.join(output_folder, filename + ".json")
 
                 ff_init_configs["tensor_parallelism_degree"] = tp
                 ff_init_configs["pipeline_parallelism_degree"] = pp
