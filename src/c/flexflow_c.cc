@@ -74,6 +74,7 @@ public:
   //                       LoraAdamOptimizerConfig *);
   FF_NEW_OPAQUE_WRAPPER(flexflow_lora_linear_config_t, LoraLinearConfig *);
   FF_NEW_OPAQUE_WRAPPER(flexflow_peft_model_id_t, PEFTModelID *);
+  FF_NEW_OPAQUE_WRAPPER(flexflow_page_manager_t, PageManager *);
 };
 
 Logger ffc_log("flexflow_c");
@@ -1215,7 +1216,8 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention(
     flexflow_model_t handle_,
     const flexflow_tensor_t input_,
     int embed_dim,
-    int num_heads,
+    int num_q_heads,
+    int num_kv_heads,
     int kdim,
     int vdim,
     float dropout,
@@ -1247,7 +1249,8 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention(
                                             original_max_position_embeddings);
   Tensor tensor = handle->inc_multihead_self_attention(input,
                                                        embed_dim,
-                                                       num_heads,
+                                                       num_q_heads,
+                                                       num_kv_heads,
                                                        kdim,
                                                        vdim,
                                                        dropout,
@@ -1267,7 +1270,8 @@ flexflow_tensor_t flexflow_model_add_spec_inc_multihead_self_attention(
     flexflow_model_t handle_,
     const flexflow_tensor_t input_,
     int embed_dim,
-    int num_heads,
+    int num_q_heads,
+    int num_kv_heads,
     int kdim,
     int vdim,
     float dropout,
@@ -1300,7 +1304,8 @@ flexflow_tensor_t flexflow_model_add_spec_inc_multihead_self_attention(
   Tensor tensor =
       handle->spec_inc_multihead_self_attention(input,
                                                 embed_dim,
-                                                num_heads,
+                                                num_q_heads,
+                                                num_kv_heads,
                                                 kdim,
                                                 vdim,
                                                 dropout,
@@ -1320,7 +1325,8 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention_verify(
     flexflow_model_t handle_,
     const flexflow_tensor_t input_,
     int embed_dim,
-    int num_heads,
+    int num_q_heads,
+    int num_kv_heads,
     int kdim,
     int vdim,
     float dropout,
@@ -1353,7 +1359,8 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention_verify(
   Tensor tensor =
       handle->inc_multihead_self_attention_verify(input,
                                                   embed_dim,
-                                                  num_heads,
+                                                  num_q_heads,
+                                                  num_kv_heads,
                                                   kdim,
                                                   vdim,
                                                   dropout,
@@ -1366,170 +1373,6 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention_verify(
                                                   qk_prod_scaling,
                                                   position_bias,
                                                   name);
-  return FFCObjectWrapper::wrap(tensor);
-}
-
-flexflow_tensor_t flexflow_model_add_inc_multiquery_self_attention(
-    flexflow_model_t handle_,
-    const flexflow_tensor_t input_,
-    int embed_dim,
-    int num_q_heads,
-    int num_kv_heads,
-    int kdim,
-    int vdim,
-    float dropout,
-    bool add_zero_attn,
-    enum DataType data_type,
-    flexflow_initializer_t kernel_initializer_,
-    bool apply_rotary_embedding,
-    float rope_theta,
-    char const *rope_type,
-    float rope_factor,
-    float low_freq_factor,
-    float high_freq_factor,
-    int original_max_position_embeddings,
-    bool scaling_query,
-    float scaling_factor,
-    bool qk_prod_scaling,
-    bool position_bias,
-    char const *name) {
-  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  Tensor input = FFCObjectWrapper::unwrap(input_);
-  Initializer *kernel_initializer =
-      FFCObjectWrapper::unwrap(kernel_initializer_);
-  RotaryEmbeddingMeta rotary_embedding_meta(apply_rotary_embedding,
-                                            rope_theta,
-                                            rope_type,
-                                            rope_factor,
-                                            low_freq_factor,
-                                            high_freq_factor,
-                                            original_max_position_embeddings);
-  Tensor tensor = handle->inc_multiquery_self_attention(input,
-                                                        embed_dim,
-                                                        num_q_heads,
-                                                        num_kv_heads,
-                                                        kdim,
-                                                        vdim,
-                                                        dropout,
-                                                        add_zero_attn,
-                                                        data_type,
-                                                        kernel_initializer,
-                                                        rotary_embedding_meta,
-                                                        scaling_query,
-                                                        scaling_factor,
-                                                        qk_prod_scaling,
-                                                        position_bias,
-                                                        name);
-  return FFCObjectWrapper::wrap(tensor);
-}
-
-flexflow_tensor_t flexflow_model_add_spec_inc_multiquery_self_attention(
-    flexflow_model_t handle_,
-    const flexflow_tensor_t input_,
-    int embed_dim,
-    int num_q_heads,
-    int num_kv_heads,
-    int kdim,
-    int vdim,
-    float dropout,
-    bool add_zero_attn,
-    enum DataType data_type,
-    flexflow_initializer_t kernel_initializer_,
-    bool apply_rotary_embedding,
-    float rope_theta,
-    char const *rope_type,
-    float rope_factor,
-    float low_freq_factor,
-    float high_freq_factor,
-    int original_max_position_embeddings,
-    bool scaling_query,
-    float scaling_factor,
-    bool qk_prod_scaling,
-    bool position_bias,
-    char const *name) {
-  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  Tensor input = FFCObjectWrapper::unwrap(input_);
-  Initializer *kernel_initializer =
-      FFCObjectWrapper::unwrap(kernel_initializer_);
-  RotaryEmbeddingMeta rotary_embedding_meta(apply_rotary_embedding,
-                                            rope_theta,
-                                            rope_type,
-                                            rope_factor,
-                                            low_freq_factor,
-                                            high_freq_factor,
-                                            original_max_position_embeddings);
-  Tensor tensor =
-      handle->spec_inc_multiquery_self_attention(input,
-                                                 embed_dim,
-                                                 num_q_heads,
-                                                 num_kv_heads,
-                                                 kdim,
-                                                 vdim,
-                                                 dropout,
-                                                 add_zero_attn,
-                                                 data_type,
-                                                 kernel_initializer,
-                                                 rotary_embedding_meta,
-                                                 scaling_query,
-                                                 scaling_factor,
-                                                 qk_prod_scaling,
-                                                 position_bias,
-                                                 name);
-  return FFCObjectWrapper::wrap(tensor);
-}
-
-flexflow_tensor_t flexflow_model_add_inc_multiquery_self_attention_verify(
-    flexflow_model_t handle_,
-    const flexflow_tensor_t input_,
-    int embed_dim,
-    int num_q_heads,
-    int num_kv_heads,
-    int kdim,
-    int vdim,
-    float dropout,
-    bool add_zero_attn,
-    enum DataType data_type,
-    flexflow_initializer_t kernel_initializer_,
-    bool apply_rotary_embedding,
-    float rope_theta,
-    char const *rope_type,
-    float rope_factor,
-    float low_freq_factor,
-    float high_freq_factor,
-    int original_max_position_embeddings,
-    bool scaling_query,
-    float scaling_factor,
-    bool qk_prod_scaling,
-    bool position_bias,
-    char const *name) {
-  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  Tensor input = FFCObjectWrapper::unwrap(input_);
-  Initializer *kernel_initializer =
-      FFCObjectWrapper::unwrap(kernel_initializer_);
-  RotaryEmbeddingMeta rotary_embedding_meta(apply_rotary_embedding,
-                                            rope_theta,
-                                            rope_type,
-                                            rope_factor,
-                                            low_freq_factor,
-                                            high_freq_factor,
-                                            original_max_position_embeddings);
-  Tensor tensor =
-      handle->inc_multiquery_self_attention_verify(input,
-                                                   embed_dim,
-                                                   num_q_heads,
-                                                   num_kv_heads,
-                                                   kdim,
-                                                   vdim,
-                                                   dropout,
-                                                   add_zero_attn,
-                                                   data_type,
-                                                   kernel_initializer,
-                                                   rotary_embedding_meta,
-                                                   scaling_query,
-                                                   scaling_factor,
-                                                   qk_prod_scaling,
-                                                   position_bias,
-                                                   name);
   return FFCObjectWrapper::wrap(tensor);
 }
 
@@ -1698,6 +1541,18 @@ flexflow_perf_metrics_t
 void flexflow_model_set_transformer_layer_id(flexflow_model_t handle_, int id) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
   handle->set_transformer_layer_id(id);
+}
+
+void flexflow_model_set_num_kv_cache_pages(flexflow_model_t handle_,
+                                           int num_kv_cache_pages) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_num_kv_cache_pages(num_kv_cache_pages);
+}
+
+int flexflow_compute_num_kv_cache_pages_needed(int max_seq_len,
+                                               int batch_size,
+                                               bool is_spec) {
+  return compute_num_kv_cache_pages_needed(max_seq_len, batch_size, is_spec);
 }
 
 void flexflow_model_generate(flexflow_model_t handle_,
@@ -2758,11 +2613,23 @@ void flexflow_request_manager_set_max_requests_per_batch(
               max_num_requests);
 }
 
+int flexflow_request_manager_get_max_requests_per_batch(
+    flexflow_request_manager_t handle_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->get_max_requests_per_batch();
+}
+
 void flexflow_request_manager_set_max_tokens_per_batch(
     flexflow_request_manager_t handle_, int max_num_tokens) {
   RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
   handle->set_max_tokens_per_batch(max_num_tokens);
   DEBUG_PRINT("[RequestManager] set max_tokens_per_batch %d", max_num_tokens);
+}
+
+int flexflow_request_manager_get_max_tokens_per_batch(
+    flexflow_request_manager_t handle_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->get_max_tokens_per_batch();
 }
 
 void flexflow_request_manager_set_max_spec_tree_token_num(
@@ -2771,6 +2638,12 @@ void flexflow_request_manager_set_max_spec_tree_token_num(
   handle->set_max_spec_tree_token_num(max_num_tokens);
   DEBUG_PRINT("[RequestManager] set max_spec_tree_token_num %d",
               max_num_tokens);
+}
+
+int flexflow_request_manager_get_max_spec_tree_token_num(
+    flexflow_request_manager_t handle_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->get_max_spec_tree_token_num();
 }
 
 void flexflow_request_manager_set_max_sequence_length(
@@ -2873,6 +2746,33 @@ void flexflow_request_manager_terminate_background_server(
   RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
   DEBUG_PRINT("[RequestManager] terminate background server %p", handle);
   handle->terminate_background_server();
+}
+
+// -----------------------------------------------------------------------
+// PageManager
+// -----------------------------------------------------------------------
+
+flexflow_page_manager_t
+    flexflow_page_manager_get_page_manager(int num_total_pages) {
+  assert(num_total_pages);
+  PageManager *pm = PageManager::get_page_manager(num_total_pages);
+  DEBUG_PRINT("[PageManager] get %p", pm);
+  return FFCObjectWrapper::wrap(pm);
+}
+
+int flexflow_page_manager_get_tot_num_pages(flexflow_page_manager_t handle_) {
+  PageManager *handle = FFCObjectWrapper::unwrap(handle_);
+  int num_pages = handle->get_tot_num_pages();
+  DEBUG_PRINT("[PageManager] %p get_tot_num_pages %d", handle, num_pages);
+  return num_pages;
+}
+
+int flexflow_page_manager_get_tokens_per_page(flexflow_page_manager_t handle_) {
+  PageManager *handle = FFCObjectWrapper::unwrap(handle_);
+  int tokens_per_page = handle->get_tokens_per_page();
+  DEBUG_PRINT(
+      "[PageManager] %p get_tokens_per_page %d", handle, tokens_per_page);
+  return tokens_per_page;
 }
 
 // -----------------------------------------------------------------------

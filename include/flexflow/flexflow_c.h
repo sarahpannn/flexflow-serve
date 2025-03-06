@@ -60,6 +60,7 @@ FF_NEW_OPAQUE_TYPE(flexflow_generation_result_t);
 // FF_NEW_OPAQUE_TYPE(flexflow_lora_adam_optimizer_config_t);
 FF_NEW_OPAQUE_TYPE(flexflow_lora_linear_config_t);
 FF_NEW_OPAQUE_TYPE(flexflow_peft_model_id_t);
+FF_NEW_OPAQUE_TYPE(flexflow_page_manager_t);
 
 // -----------------------------------------------------------------------
 // FFConfig
@@ -447,7 +448,8 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention(
     flexflow_model_t handle_,
     const flexflow_tensor_t input_,
     int embed_dim,
-    int num_heads,
+    int num_q_heads,
+    int num_kv_heads,
     int kdim,
     int vdim,
     float dropout,
@@ -471,7 +473,8 @@ flexflow_tensor_t flexflow_model_add_spec_inc_multihead_self_attention(
     flexflow_model_t handle_,
     const flexflow_tensor_t input_,
     int embed_dim,
-    int num_heads,
+    int num_q_heads,
+    int num_kv_heads,
     int kdim,
     int vdim,
     float dropout,
@@ -492,80 +495,6 @@ flexflow_tensor_t flexflow_model_add_spec_inc_multihead_self_attention(
     char const *name);
 
 flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention_verify(
-    flexflow_model_t handle_,
-    const flexflow_tensor_t input_,
-    int embed_dim,
-    int num_heads,
-    int kdim,
-    int vdim,
-    float dropout,
-    bool add_zero_attn,
-    enum DataType data_type,
-    flexflow_initializer_t kernel_initializer_,
-    bool apply_rotary_embedding,
-    float rope_theta,
-    char const *rope_type,
-    float rope_factor,
-    float low_freq_factor,
-    float high_freq_factor,
-    int original_max_position_embeddings,
-    bool scaling_query,
-    float scaling_factor,
-    bool qk_prod_scaling,
-    bool position_bias,
-    char const *name);
-
-flexflow_tensor_t flexflow_model_add_inc_multiquery_self_attention(
-    flexflow_model_t handle_,
-    const flexflow_tensor_t input_,
-    int embed_dim,
-    int num_q_heads,
-    int num_kv_heads,
-    int kdim,
-    int vdim,
-    float dropout,
-    bool add_zero_attn,
-    enum DataType data_type,
-    flexflow_initializer_t kernel_initializer_,
-    bool apply_rotary_embedding,
-    float rope_theta,
-    char const *rope_type,
-    float rope_factor,
-    float low_freq_factor,
-    float high_freq_factor,
-    int original_max_position_embeddings,
-    bool scaling_query,
-    float scaling_factor,
-    bool qk_prod_scaling,
-    bool position_bias,
-    char const *name);
-
-flexflow_tensor_t flexflow_model_add_spec_inc_multiquery_self_attention(
-    flexflow_model_t handle_,
-    const flexflow_tensor_t input_,
-    int embed_dim,
-    int num_q_heads,
-    int num_kv_heads,
-    int kdim,
-    int vdim,
-    float dropout,
-    bool add_zero_attn,
-    enum DataType data_type,
-    flexflow_initializer_t kernel_initializer_,
-    bool apply_rotary_embedding,
-    float rope_theta,
-    char const *rope_type,
-    float rope_factor,
-    float low_freq_factor,
-    float high_freq_factor,
-    int original_max_position_embeddings,
-    bool scaling_query,
-    float scaling_factor,
-    bool qk_prod_scaling,
-    bool position_bias,
-    char const *name);
-
-flexflow_tensor_t flexflow_model_add_inc_multiquery_self_attention_verify(
     flexflow_model_t handle_,
     const flexflow_tensor_t input_,
     int embed_dim,
@@ -655,6 +584,13 @@ flexflow_perf_metrics_t
     flexflow_model_get_perf_metrics(flexflow_model_t handle);
 
 void flexflow_model_set_transformer_layer_id(flexflow_model_t handle, int id);
+
+void flexflow_model_set_num_kv_cache_pages(flexflow_model_t handle_,
+                                           int num_kv_cache_pages);
+
+int flexflow_compute_num_kv_cache_pages_needed(int max_seq_len,
+                                               int batch_size,
+                                               bool is_spec);
 
 void flexflow_model_generate(flexflow_model_t handle_,
                              int num_requests,
@@ -1021,11 +957,20 @@ flexflow_request_manager_t flexflow_request_manager_get_request_manager(void);
 void flexflow_request_manager_set_max_requests_per_batch(
     flexflow_request_manager_t handle_, int max_num_requests);
 
+int flexflow_request_manager_get_max_requests_per_batch(
+    flexflow_request_manager_t handle_);
+
 void flexflow_request_manager_set_max_tokens_per_batch(
     flexflow_request_manager_t handle_, int max_num_tokens);
 
+int flexflow_request_manager_get_max_tokens_per_batch(
+    flexflow_request_manager_t handle_);
+
 void flexflow_request_manager_set_max_spec_tree_token_num(
     flexflow_request_manager_t handle_, int max_num_tokens);
+
+int flexflow_request_manager_get_max_spec_tree_token_num(
+    flexflow_request_manager_t handle_);
 
 void flexflow_request_manager_set_max_sequence_length(
     flexflow_request_manager_t handle_, int max_seq_length);
@@ -1064,6 +1009,17 @@ void flexflow_request_manager_start_background_server(
 
 void flexflow_request_manager_terminate_background_server(
     flexflow_request_manager_t handle_);
+
+// -----------------------------------------------------------------------
+// PageManager
+// -----------------------------------------------------------------------
+
+flexflow_page_manager_t
+    flexflow_page_manager_get_page_manager(int num_total_pages);
+
+int flexflow_page_manager_get_tot_num_pages(flexflow_page_manager_t handle_);
+
+int flexflow_page_manager_get_tokens_per_page(flexflow_page_manager_t handle_);
 
 // -----------------------------------------------------------------------
 // InferenceManager

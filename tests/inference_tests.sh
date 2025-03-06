@@ -46,7 +46,7 @@ export LEGION_BACKTRACE=1
 
 ############## Run inference in flexflow-serve ##############
 
-echo "Running inference in flexflow-serve..."
+echo "Running inference in flexflow-serve (python)..."
 
 # Generate test configs
 rm -rf ./inference/inf_test_configs/*.json || true
@@ -61,7 +61,7 @@ for file in ./inference/inf_test_configs/*.json; do
       script="./inference/python/spec_infer.py"
     fi
     # Run script
-    python "$script" -config-file "$file" 
+    python "$script" -config-file "$file"
 done
 
 ##############  Run inference in HuggingFace ##############

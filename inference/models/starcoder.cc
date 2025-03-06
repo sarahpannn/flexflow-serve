@@ -40,7 +40,14 @@ void STARCODER::create_starcoder_model(
                     "divisible by the tensor parallelism degree");
   }
 
-  std::unordered_map<std::string, Layer *> weights_layers;
+  assert(startcoder_config.hidden_size %
+                 startcoder_config.num_attention_heads ==
+             0 &&
+         "Hidden size not divisible by number of attention heads");
+  int head_dim =
+      startcoder_config.hidden_size / startcoder_config.num_attention_heads;
+  int tot_num_heads = startcoder_config.num_attention_heads + 2 * 1;
+
   std::vector<int> axes = {0};
 
   Tensor input;
@@ -104,9 +111,7 @@ void STARCODER::create_starcoder_model(
 
     Tensor qkv_proj = ff.dense(
         ln_1,
-        startcoder_config.hidden_size *
-            3, // q, k, v. need to change if want to remove replication.
-               // (q_heads + 2 * kv_heads) * proj_size
+        head_dim * tot_num_heads,
         AC_MODE_NONE,
         false,         // seems like it does not use bias
         DT_NONE,       // what is this
@@ -122,15 +127,13 @@ void STARCODER::create_starcoder_model(
     Tensor o_proj;
     switch (mode) {
       case INC_DECODING_MODE: {
-        o_proj = ff.inc_multiquery_self_attention(
+        o_proj = ff.inc_multihead_self_attention(
             qkv_proj,
             startcoder_config.hidden_size,
             startcoder_config.num_attention_heads,
             1,
-            startcoder_config.hidden_size /
-                startcoder_config.num_attention_heads,
-            startcoder_config.hidden_size /
-                startcoder_config.num_attention_heads,
+            head_dim,
+            head_dim,
             startcoder_config.dropout_p,             /*dropout*/
             false,                                   /*add_zero_attn*/
             DT_NONE,                                 /*data_type*/
@@ -261,15 +264,15 @@ void STARCODER::create_starcoder_model(
   }
 
   InferenceManager *im = InferenceManager::get_inference_manager();
-  FileDataLoader *fileloader = new FileDataLoader(
-      "",
-      weight_file_path,
-      startcoder_config.num_attention_heads,
-      1,
-      startcoder_config.hidden_size,
-      startcoder_config.hidden_size / startcoder_config.num_attention_heads,
-      ff.config.tensor_parallelism_degree,
-      use_full_precision);
+  FileDataLoader *fileloader =
+      new FileDataLoader("",
+                         weight_file_path,
+                         startcoder_config.num_attention_heads,
+                         1,
+                         startcoder_config.hidden_size,
+                         head_dim,
+                         ff.config.tensor_parallelism_degree,
+                         use_full_precision);
   im->register_model_weights_loader(&ff, fileloader);
 }
 

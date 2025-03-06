@@ -37,17 +37,18 @@ void LLAMA::create_llama_model(FFModel &ff,
                     "divisible by the tensor parallelism degree");
   }
 
-  std::unordered_map<std::string, Layer *> weights_layers;
+  assert(llama_config.hidden_size % llama_config.num_attention_heads == 0 &&
+         "Hidden size not divisible by number of attention heads");
+  int head_dim = llama_config.hidden_size / llama_config.num_attention_heads;
+  int tot_num_heads =
+      llama_config.num_attention_heads + 2 * llama_config.num_key_value_heads;
 
-  Tensor input;
-  {
-    int const token_dims[] = {
-        (mode == TREE_VERIFY_MODE || mode == BEAM_SEARCH_MODE)
-            ? BatchConfig::max_verify_tokens_per_batch()
-            : BatchConfig::max_tokens_per_batch(),
-        1};
-    input = ff.create_tensor<2>(token_dims, DT_INT32);
-  }
+  int const token_dims[] = {
+      (mode == TREE_VERIFY_MODE || mode == BEAM_SEARCH_MODE)
+          ? BatchConfig::max_verify_tokens_per_batch()
+          : BatchConfig::max_tokens_per_batch(),
+      1};
+  Tensor input = ff.create_tensor<2>(token_dims, DT_INT32);
 
   Initializer *embed_init = new UniformInitializer(std::rand(), 0, 0);
 
@@ -91,11 +92,10 @@ void LLAMA::create_llama_model(FFModel &ff,
       token = token_att_norm[0];
       att_norm = token_att_norm[1];
     }
+
     Tensor qkv_proj = ff.dense(
         att_norm,
-        llama_config.hidden_size *
-            3, // q, k, v. need to change if want to remove replication.
-               // (q_heads + 2 * kv_heads) * proj_size
+        head_dim * tot_num_heads,
         AC_MODE_NONE,
         false,         // seems like llama does not use bias
         DT_NONE,       // what is this
@@ -110,13 +110,13 @@ void LLAMA::create_llama_model(FFModel &ff,
     Tensor mha;
     switch (mode) {
       case BEAM_SEARCH_MODE: {
-        mha = ff.spec_inc_multiquery_self_attention(
+        mha = ff.spec_inc_multihead_self_attention(
             qkv_proj,
             llama_config.hidden_size,
             llama_config.num_attention_heads,
             llama_config.num_key_value_heads,
-            llama_config.hidden_size / llama_config.num_attention_heads,
-            llama_config.hidden_size / llama_config.num_attention_heads,
+            head_dim,
+            head_dim,
             0.0f,    /*dropout*/
             false,   /*add_zero_attn*/
             DT_NONE, /*data_type*/
@@ -132,13 +132,13 @@ void LLAMA::create_llama_model(FFModel &ff,
         break;
       }
       case TREE_VERIFY_MODE: {
-        mha = ff.inc_multiquery_self_attention_verify(
+        mha = ff.inc_multihead_self_attention_verify(
             qkv_proj,
             llama_config.hidden_size,
             llama_config.num_attention_heads,
             llama_config.num_key_value_heads,
-            llama_config.hidden_size / llama_config.num_attention_heads,
-            llama_config.hidden_size / llama_config.num_attention_heads,
+            head_dim,
+            head_dim,
             0.0f,    /*dropout*/
             false,   /*add_zero_attn*/
             DT_NONE, /*data_type*/
@@ -154,13 +154,13 @@ void LLAMA::create_llama_model(FFModel &ff,
         break;
       }
       case INC_DECODING_MODE: {
-        mha = ff.inc_multiquery_self_attention(
+        mha = ff.inc_multihead_self_attention(
             qkv_proj,
             llama_config.hidden_size,
             llama_config.num_attention_heads,
             llama_config.num_key_value_heads,
-            llama_config.hidden_size / llama_config.num_attention_heads,
-            llama_config.hidden_size / llama_config.num_attention_heads,
+            head_dim,
+            head_dim,
             0.0f,    /*dropout*/
             false,   /*add_zero_attn*/
             DT_NONE, /*data_type*/
@@ -302,15 +302,15 @@ void LLAMA::create_llama_model(FFModel &ff,
     ff.add_lora_layers(target_modules);
   }
 
-  FileDataLoader *fileloader = new FileDataLoader(
-      "",
-      weight_file_path,
-      llama_config.num_attention_heads,
-      llama_config.num_key_value_heads,
-      llama_config.hidden_size,
-      llama_config.hidden_size / llama_config.num_attention_heads,
-      ff.config.tensor_parallelism_degree,
-      use_full_precision);
+  FileDataLoader *fileloader =
+      new FileDataLoader("",
+                         weight_file_path,
+                         llama_config.num_attention_heads,
+                         llama_config.num_key_value_heads,
+                         llama_config.hidden_size,
+                         head_dim,
+                         ff.config.tensor_parallelism_degree,
+                         use_full_precision);
 
   InferenceManager *im = InferenceManager::get_inference_manager();
   im->register_model_weights_loader(&ff, fileloader);

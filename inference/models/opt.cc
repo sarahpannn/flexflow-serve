@@ -35,8 +35,6 @@ void OPT::create_opt_model(FFModel &ff,
                     "divisible by the tensor parallelism degree");
   }
 
-  std::unordered_map<std::string, Layer *> weights_layers;
-
   //------------------------------ build the model --------------------------
   Tensor input;
   Tensor position_input;
@@ -124,6 +122,7 @@ void OPT::create_opt_model(FFModel &ff,
             qkv_proj,
             opt_config.hidden_size,
             opt_config.num_attention_heads,
+            opt_config.num_attention_heads,
             opt_config.hidden_size / opt_config.num_attention_heads,
             opt_config.hidden_size / opt_config.num_attention_heads,
             0.0f,    /*dropout*/
@@ -146,6 +145,7 @@ void OPT::create_opt_model(FFModel &ff,
             qkv_proj,
             opt_config.hidden_size,
             opt_config.num_attention_heads,
+            opt_config.num_attention_heads,
             opt_config.hidden_size / opt_config.num_attention_heads,
             opt_config.hidden_size / opt_config.num_attention_heads,
             0.0f,    /*dropout*/
@@ -167,6 +167,7 @@ void OPT::create_opt_model(FFModel &ff,
         o_proj = ff.inc_multihead_self_attention(
             qkv_proj,
             opt_config.hidden_size,
+            opt_config.num_attention_heads,
             opt_config.num_attention_heads,
             opt_config.hidden_size / opt_config.num_attention_heads,
             opt_config.hidden_size / opt_config.num_attention_heads,

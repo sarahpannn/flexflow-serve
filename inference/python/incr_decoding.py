@@ -69,6 +69,9 @@ def get_configs():
             "full_precision": False,
             "prompt": "",
             "output_file": "",
+            "max_requests_per_batch": 4,
+            "max_seq_length": 256,
+            "max_tokens_per_batch": 64,
             "max_length": 128,
         }
         # Merge dictionaries
@@ -101,9 +104,9 @@ def main():
     )
     llm.compile(
         generation_config,
-        max_requests_per_batch=4,
-        max_seq_length=256,
-        max_tokens_per_batch=64,
+        max_requests_per_batch = configs_dict.get("max_requests_per_batch", 4),
+        max_seq_length = configs_dict.get("max_seq_length", 256),
+        max_tokens_per_batch = configs_dict.get("max_tokens_per_batch", 64),
     )
 
     llm.start_server()

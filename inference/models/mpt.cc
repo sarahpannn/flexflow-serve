@@ -35,8 +35,6 @@ void MPT::create_mpt_model(FFModel &ff,
                     "divisible by the tensor parallelism degree");
   }
 
-  std::unordered_map<std::string, Layer *> weights_layers;
-
   //------------------------------ build the model --------------------------
   Tensor input;
   {
@@ -115,6 +113,7 @@ void MPT::create_mpt_model(FFModel &ff,
             qkv_proj,
             mpt_config.hidden_size,
             mpt_config.n_heads,
+            mpt_config.n_heads,
             mpt_config.hidden_size / mpt_config.n_heads,
             mpt_config.hidden_size / mpt_config.n_heads,
             0.0f,
@@ -137,6 +136,7 @@ void MPT::create_mpt_model(FFModel &ff,
             qkv_proj,
             mpt_config.hidden_size,
             mpt_config.n_heads,
+            mpt_config.n_heads,
             mpt_config.hidden_size / mpt_config.n_heads,
             mpt_config.hidden_size / mpt_config.n_heads,
             0.0f,
@@ -158,6 +158,7 @@ void MPT::create_mpt_model(FFModel &ff,
         o_proj = ff.inc_multihead_self_attention(
             qkv_proj,
             mpt_config.hidden_size,
+            mpt_config.n_heads,
             mpt_config.n_heads,
             mpt_config.hidden_size / mpt_config.n_heads,
             mpt_config.hidden_size / mpt_config.n_heads,

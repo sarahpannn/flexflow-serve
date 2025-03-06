@@ -33,7 +33,7 @@ export LEGION_BACKTRACE=1
 # Download test model
 python ./inference/utils/download_peft_model.py goliaro/llama-160m-lora
 
-# Run PEFT in Huggingface to get ground truth tensors
+# # Run PEFT in Huggingface to get ground truth tensors
 python ./tests/peft/hf_finetune.py --peft-model-id goliaro/llama-160m-lora --save-peft-tensors --use-full-precision -lr 0.001
 
 # Python test

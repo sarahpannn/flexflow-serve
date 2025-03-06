@@ -16,6 +16,7 @@
 #ifndef _FLEXFLOW_CONFIG_H_
 #define _FLEXFLOW_CONFIG_H_
 #include "ffconst.h"
+#include "flexflow/attention_config.h"
 #include "flexflow/batch_config.h"
 #include "legion.h"
 #include <cstring>
@@ -87,15 +88,18 @@ struct CombinedBatchConfigMetaStruct {
 
 struct FFHandler {
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
-  cudnnHandle_t dnn;
-  cublasHandle_t blas;
+  cudnnHandle_t dnn, peft_dnn;
+  cublasHandle_t blas, peft_blas;
 #else
-  miopenHandle_t dnn;
-  hipblasHandle_t blas;
+  miopenHandle_t dnn, peft_dnn;
+  hipblasHandle_t blas, peft_blas;
 #endif
   void *workSpace;
   size_t workSpaceSize;
   CombinedBatchConfigMetaStruct *batch_config_metadata;
+
+  // flashinfer
+  AttentionMetaData *incr_attention_metadata;
 
   // request info + token info + topolopgy mask info
   size_t batch_config_metadata_size = sizeof(CombinedBatchConfigMetaStruct);
@@ -106,6 +110,7 @@ struct FFHandler {
   bool allowTensorOpMathConversion;
 #ifdef FF_USE_NCCL
   ncclComm_t ncclComm;
+  ncclComm_t ncclCommPeft;
 #endif
 };
 

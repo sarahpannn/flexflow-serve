@@ -197,6 +197,9 @@ include(variant)
 # optional
 include(optional)
 
+# flashinfer
+list(APPEND FLEXFLOW_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/deps/flashinfer/include)
+
 if (FF_GPU_BACKEND STREQUAL "cuda")
   list(APPEND FF_CC_FLAGS
     -DFF_USE_CUDA)
@@ -220,7 +223,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   list(APPEND FF_CC_FLAGS
     -DFF_DEBUG)
   list(APPEND FF_NVCC_FLAGS
-    -DFF_DEBUG)
+    -DFF_DEBUG -lineinfo)
 endif()
 
 message(STATUS "FlexFlow MAX_DIM: ${FF_MAX_DIM}")

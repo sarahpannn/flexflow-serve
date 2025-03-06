@@ -284,6 +284,7 @@ RequestManager::RequestManager()
   max_tokens_per_batch = -1;
   max_spec_tree_token_num = -1;
   max_sequence_length = -1;
+
   step_idx = 0;
   run_idx = 0;
 }
@@ -338,7 +339,7 @@ int RequestManager::get_max_tokens_per_batch() {
 }
 
 int RequestManager::get_max_spec_tree_token_num() {
-  assert(max_spec_tree_token_num > 0);
+  assert(max_spec_tree_token_num >= 0);
   return max_spec_tree_token_num;
 }
 
@@ -572,7 +573,7 @@ RequestGuid RequestManager::register_new_request(Request const &request_) {
     return BatchConfig::INVALID_GUID;
   }
 
-  pending_infr_request_queue.push(request);
+  pending_infr_request_queue.push_back(request);
   all_requests[request.guid] = request;
   {
     const std::lock_guard<std::mutex> lock(request_to_promise_mutex);
@@ -754,7 +755,18 @@ bool RequestManager::is_eos_token(int token_id) {
   return false;
 }
 
+bool RequestManager::inf_req_evicted(BatchConfig const &old_bc, int i) {
+  // printf("Entering inf_req_evicted\n");
+  Request &request = all_requests[old_bc.requestsInfo[i].request_guid];
+  // if (request.status == Request::EVICTED) {
+  //   printf("Request %zu cannot continue because it is now in evicted
+  //   state...\n", old_bc.requestsInfo[i].request_guid);
+  // }
+  return request.status == Request::EVICTED;
+}
+
 bool RequestManager::inf_req_completed(BatchConfig const &old_bc, int i) {
+  // printf("Entering inf_req_completed\n");
   Request &request = all_requests[old_bc.requestsInfo[i].request_guid];
   bool request_completed = false;
   // printf("model_type = %d\n", this->model_type);
@@ -765,6 +777,32 @@ bool RequestManager::inf_req_completed(BatchConfig const &old_bc, int i) {
     request_completed = true;
   }
   return request_completed;
+}
+
+bool RequestManager::enough_space_to_add_request(
+    BatchConfig const &new_bc, int num_concurrent_inf_adapters) {
+  Request new_request = pending_infr_request_queue.front();
+  assert(new_request.req_type == RequestType::REQ_INFERENCE);
+
+  int prefill_tokens_first_batch =
+      std::min(get_max_tokens_per_batch() - new_bc.num_tokens,
+               (int)new_request.tokens.size());
+
+  // if there is not enough space in the page table, don't add it yet
+  PageManager *pm = PageManager::get_page_manager();
+  if (!pm->enough_space_to_add_request(new_request.tokens.size(),
+                                       prefill_tokens_first_batch,
+                                       get_max_tokens_per_batch())) {
+    // printf("not enough space to add request %zu\n", new_request.guid);
+    return false;
+  }
+
+  // if the request has peft adapters and we are at capacity, don't add it yet
+  if (new_request.peft_model_id != PEFTModelID::NO_ID &&
+      num_concurrent_inf_adapters == get_max_concurrent_adapters()) {
+    return false;
+  }
+  return true;
 }
 
 void RequestManager::check_batch(BatchConfig const &old_bc,
@@ -811,6 +849,7 @@ void RequestManager::check_batch(BatchConfig const &old_bc,
 
 void RequestManager::add_peft_config_to_request_info(
     BatchConfig &bc, int req_idx, LoraLinearConfig const &peft_config) {
+  // printf("Entering add_peft_config_to_request_info\n");
   std::memset(bc.requestsInfo[req_idx].peft_model_config_str,
               0,
               BatchConfig::MAX_PEFT_CONFIG_SIZE);
@@ -823,6 +862,7 @@ void RequestManager::add_peft_config_to_request_info(
 
 void RequestManager::record_decoding_req_profiling_info(
     BatchConfig const &old_fwd_bc, int req_idx) {
+  // printf("Entering record_decoding_req_profiling_info\n");
   if (old_fwd_bc.request_completed[req_idx]) {
     return;
   }
@@ -854,6 +894,7 @@ void RequestManager::record_decoding_req_profiling_info(
 
 void RequestManager::process_inf_req_progress(BatchConfig const &old_fwd_bc,
                                               InferenceResult const &result) {
+  // printf("Entering process_inf_req_progress\n");
   for (int i = 0; i < old_fwd_bc.num_active_tokens(); i++) {
     size_t guid =
         old_fwd_bc.requestsInfo[old_fwd_bc.tokensInfo[i].request_index]
@@ -893,6 +934,8 @@ void RequestManager::process_inf_req_progress(BatchConfig const &old_fwd_bc,
     record_decoding_req_profiling_info(old_fwd_bc, req_idx);
 
     if (inf_req_completed(old_fwd_bc, req_idx)) {
+      printf("Request %zu completed...\n",
+             old_fwd_bc.requestsInfo[req_idx].request_guid);
       handle_completed_inf_req(old_fwd_bc, req_idx);
     }
   }
@@ -900,10 +943,15 @@ void RequestManager::process_inf_req_progress(BatchConfig const &old_fwd_bc,
 
 void RequestManager::handle_completed_inf_req(BatchConfig const &old_bc,
                                               int i) {
+  // printf("Entering handle_completed_inf_req\n");
   Request &request = all_requests[old_bc.requestsInfo[i].request_guid];
   assert(old_bc.requestsInfo[i].num_tokens_in_batch > 0);
   assert(request.req_type == RequestType::REQ_INFERENCE &&
          "Found misplaced finetuning request");
+
+  // page attention: free the pages
+  PageManager *page_manager = PageManager::get_page_manager();
+  page_manager->remove_request(request.guid);
 
   GenerationResult &gr = request_generation_results[request.guid];
   std::vector<int> output_tokens = std::vector<int>(
@@ -931,12 +979,104 @@ void RequestManager::handle_completed_inf_req(BatchConfig const &old_bc,
   profiling_requests[request.guid] = profile_info;
 }
 
+void RequestManager::evict_requests_if_needed(BatchConfig const &old_bc,
+                                              int inference_batch_size) {
+  // printf("Entering evict_requests_if_needed\n");
+  // compute number of tokens that each request would like to run in the next
+  // step
+  std::vector<std::pair<RequestGuid, int>> planned_tokens_per_request;
+  int tot_num_planned_tokens = 0;
+  for (int i = 0; i < inference_batch_size; i++) {
+    if (!old_bc.request_completed[i] && !inf_req_completed(old_bc, i)) {
+      Request &request = all_requests[old_bc.requestsInfo[i].request_guid];
+      assert(request.req_type == RequestType::REQ_INFERENCE &&
+             "Found misplaced finetuning request");
+      int processed_tokens =
+          old_bc.requestsInfo[i].first_token_depth_in_request +
+          old_bc.requestsInfo[i].num_tokens_in_batch;
+
+      int num_planned_tokens = 0;
+      if (processed_tokens + 1 == request.tokens.size()) {
+        // incr decoding phase, planning to process 1 token in the next batch
+        num_planned_tokens = 1;
+      } else {
+        // Prompt phase
+        assert(old_bc.requestsInfo[i].prompt_phase == true);
+        int space_for_incr_dec_requests = 0;
+        // If the prompt can't fit in the batch, compute how much space we
+        // need to leave out for incomplete requests in decoding phase at
+        // higher indices.
+        for (int ii = i + 1; ii < inference_batch_size; ii++) {
+          if (old_bc.request_completed[ii]) {
+            continue;
+          }
+          Request &old_request =
+              all_requests[old_bc.requestsInfo[ii].request_guid];
+          bool req_completed = inf_req_completed(old_bc, ii);
+          if (!req_completed) {
+            space_for_incr_dec_requests++;
+          }
+        }
+        num_planned_tokens =
+            std::min(get_max_tokens_per_batch() - tot_num_planned_tokens -
+                         space_for_incr_dec_requests,
+                     (int)request.tokens.size() - processed_tokens);
+      }
+      assert(num_planned_tokens > 0);
+
+      planned_tokens_per_request.push_back(
+          std::make_pair(request.guid, num_planned_tokens));
+
+      tot_num_planned_tokens += num_planned_tokens;
+    }
+  }
+  assert(tot_num_planned_tokens >= 0 &&
+         tot_num_planned_tokens <= get_max_tokens_per_batch());
+
+  if (tot_num_planned_tokens == 0) {
+    return;
+  }
+
+  // std::cout << "\nplanned tokens per request: " << std::endl;
+  // for (const auto &pair : planned_tokens_per_request) {
+  //   std::cout << "Request GUID: " << pair.first << ", Planned Tokens: " <<
+  //   pair.second << std::endl;
+  // }
+
+  PageManager *pm = PageManager::get_page_manager();
+  // std::cout << "pm state before evicting (if needed): " << *pm << std::endl;
+
+  while (!pm->enough_space_to_append_tokens(planned_tokens_per_request)) {
+    RequestGuid request_to_evict = pm->evict_request_fifo();
+    Request &request = all_requests[request_to_evict];
+    request.status = Request::EVICTED;
+    size_t before = pending_infr_request_queue.size();
+    pending_infr_request_queue.push_front(request);
+    size_t after = pending_infr_request_queue.size();
+    // printf("\nEvicting request: %zu\n", request.guid);
+    // printf("Pending infr request queue size: %zu -> %zu\n", before, after);
+    // Remove the evicted request from planned_tokens_per_request
+    // before = planned_tokens_per_request.size();
+    planned_tokens_per_request.erase(
+        std::remove_if(
+            planned_tokens_per_request.begin(),
+            planned_tokens_per_request.end(),
+            [request_to_evict](std::pair<RequestGuid, int> const &p) {
+              return p.first == request_to_evict;
+            }),
+        planned_tokens_per_request.end());
+    // after = planned_tokens_per_request.size();
+    // printf("planned_tokens_per_request size: %zu -> %zu\n", before, after);
+  }
+}
+
 void RequestManager::add_continuing_inf_req_to_new_batch(
     BatchConfig &new_bc,
     BatchConfig const &old_bc,
     int &num_active_req,
     int &num_concurrent_inf_adapters,
     int i) {
+  // printf("Entering add_continuing_inf_req_to_new_batch\n");
   assert(new_bc.num_tokens < get_max_tokens_per_batch() &&
          "Trying to add a continuing request when the batch is full");
   Request &request = all_requests[old_bc.requestsInfo[i].request_guid];
@@ -1016,6 +1156,12 @@ void RequestManager::add_continuing_inf_req_to_new_batch(
     new_bc.tokensInfo[new_bc.num_tokens].token_id = request.tokens[depth];
     new_bc.num_tokens++;
   }
+
+  // record num tokens used in kv cache
+  PageManager *pm = PageManager::get_page_manager();
+  pm->append_tokens(new_bc.requestsInfo[i].request_guid,
+                    new_bc.requestsInfo[i].num_tokens_in_batch);
+
   // Update profiling
   profiling_requests[new_bc.requestsInfo[i].request_guid].llm_decoding_steps++;
 }
@@ -1024,28 +1170,27 @@ void RequestManager::add_new_inf_req(BatchConfig &new_bc,
                                      int &num_active_req,
                                      int &num_concurrent_inf_adapters,
                                      int i) {
+  // printf("Entering add_new_inf_req\n");
   assert(!pending_infr_request_queue.empty() &&
          "Trying to add a new inference request when there are none");
   assert(new_bc.num_tokens < get_max_tokens_per_batch() &&
          "Trying to add a new inference request when the batch is full");
 
-  Request new_request = pending_infr_request_queue.front();
-  assert(new_request.req_type == RequestType::REQ_INFERENCE);
+  assert(enough_space_to_add_request(new_bc, num_concurrent_inf_adapters) &&
+         "Attempting to add a request that does not fit");
 
-  // if the request has peft adapters and we are at capacity, don't add it yet
-  if (new_request.peft_model_id != PEFTModelID::NO_ID &&
-      num_concurrent_inf_adapters == get_max_concurrent_adapters()) {
-    return;
-  }
+  Request &pq_request = pending_infr_request_queue.front();
+  Request &new_request = all_requests[pq_request.guid];
+  pending_infr_request_queue.pop_front();
 
-  pending_infr_request_queue.pop();
+  int prefill_tokens_first_batch =
+      std::min(get_max_tokens_per_batch() - new_bc.num_tokens,
+               (int)new_request.tokens.size());
 
   new_bc.requestsInfo[i].first_token_depth_in_request = 0;
   new_bc.requestsInfo[i].first_token_offset_in_batch = new_bc.num_tokens;
   new_bc.requestsInfo[i].request_guid = new_request.guid;
-  new_bc.requestsInfo[i].num_tokens_in_batch =
-      std::min(get_max_tokens_per_batch() - new_bc.num_tokens,
-               (int)new_request.tokens.size());
+  new_bc.requestsInfo[i].num_tokens_in_batch = prefill_tokens_first_batch;
   new_bc.requestsInfo[i].max_length = new_request.max_length;
   new_bc.requestsInfo[i].peft_model_id = new_request.peft_model_id;
   if (new_request.peft_model_id != PEFTModelID::NO_ID) {
@@ -1058,28 +1203,45 @@ void RequestManager::add_new_inf_req(BatchConfig &new_bc,
   num_active_req++;
   new_bc.requestsInfo[num_active_req].batch_config_request_id = i;
   // add start time to profile_info for the new request
-  profiling_requests[new_request.guid].llm_decoding_steps = 1;
-  profiling_requests[new_request.guid].start_time =
-      Realm::Clock::current_time_in_microseconds();
+  if (new_request.status == Request::EVICTED) {
+    assert(profiling_requests.find(new_request.guid) !=
+           profiling_requests.end());
+  } else {
+    profiling_requests[new_request.guid].llm_decoding_steps = 1;
+    profiling_requests[new_request.guid].start_time =
+        Realm::Clock::current_time_in_microseconds();
+  }
+
   for (int j = 0; j < new_bc.requestsInfo[i].num_tokens_in_batch; j++) {
     int depth = new_bc.requestsInfo[i].first_token_depth_in_request + j;
     new_bc.tokensInfo[new_bc.num_tokens].request_index = i;
     new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request = depth;
     assert(depth < new_request.tokens.size());
     new_bc.tokensInfo[new_bc.num_tokens].token_id = new_request.tokens[depth];
+
     new_bc.num_tokens++;
   }
 
-  // Record request start time
-  InferenceReqProfileInfo inf_profile_info;
-  inf_profile_info.request_guid = new_request.guid;
-  inf_profile_info.decoding_step_idx = REQ_START_TIME_STEP_IDX;
-  inf_profile_info.timestamp = Realm::Clock::current_time_in_microseconds();
-  inf_req_profile_infos.push_back(inf_profile_info);
+  if (new_request.status != Request::EVICTED) {
+    // Record request start time
+    InferenceReqProfileInfo inf_profile_info;
+    inf_profile_info.request_guid = new_request.guid;
+    inf_profile_info.decoding_step_idx = REQ_START_TIME_STEP_IDX;
+    inf_profile_info.timestamp = Realm::Clock::current_time_in_microseconds();
+    inf_req_profile_infos.push_back(inf_profile_info);
+  } else {
+    new_request.status = Request::RUNNING;
+  }
+
+  PageManager *pm = PageManager::get_page_manager();
+  pm->add_request(new_request.guid, (int)new_request.tokens.size());
+  pm->append_tokens(new_request.guid,
+                    new_bc.requestsInfo[i].num_tokens_in_batch);
 }
 
 void RequestManager::handle_completed_finetuning_req(
     BatchConfig const &old_finetuning_bc) {
+  // printf("Entering handle_completed_finetuning_req\n");
   if (!inference_finished) {
     assert(
         old_finetuning_bc.num_finetuning_bwd_requests() == 1 &&
@@ -1131,6 +1293,7 @@ void RequestManager::handle_completed_finetuning_req(
 }
 
 void RequestManager::add_finetuning_req_fwd_batch(BatchConfig &new_bc) {
+  // printf("Entering add_finetuning_req_fwd_batch\n");
   assert(enable_peft_finetuning && "PEFT finetuning is not enabled");
   assert(!pending_peft_request_queue.empty() &&
          "Trying to add a new finetuning request when there are none");
@@ -1200,6 +1363,7 @@ void RequestManager::add_finetuning_req_fwd_batch(BatchConfig &new_bc) {
 }
 
 void RequestManager::add_finetuning_req_bwd_batch(BatchConfig &new_bc) {
+  // printf("Entering add_finetuning_req_bwd_batch\n");
   assert(enable_peft_finetuning && "PEFT finetuning is not enabled");
   assert(!pending_peft_request_queue.empty() &&
          "Trying to add a new finetuning request when there are none");
@@ -1284,6 +1448,7 @@ void RequestManager::add_finetuning_req_bwd_batch(BatchConfig &new_bc) {
 }
 
 bool RequestManager::finetuning_fwd_work_available() {
+  // printf("Entering finetuning_fwd_work_available\n");
   if (pending_peft_request_queue.empty() || inference_finished) {
     return false;
   }
@@ -1292,6 +1457,7 @@ bool RequestManager::finetuning_fwd_work_available() {
 }
 
 bool RequestManager::finetuning_bwd_work_available() {
+  // printf("Entering finetuning_bwd_work_available\n");
   if (pending_peft_request_queue.empty() || inference_finished) {
     return false;
   }
@@ -1301,6 +1467,7 @@ bool RequestManager::finetuning_bwd_work_available() {
 
 void RequestManager::process_finetuning_req_fwd_progress(
     BatchConfig const &old_bc, InferenceResult const &result) {
+  // printf("Entering process_finetuning_req_fwd_progress\n");
   assert(old_bc.num_finetuning_fwd_requests() +
                  old_bc.num_finetuning_bwd_requests() <=
              1 &&
@@ -1361,6 +1528,7 @@ void RequestManager::process_finetuning_req_fwd_progress(
 
 void RequestManager::process_finetuning_req_bwd_progress(
     BatchConfig const &old_bc) {
+  // printf("Entering process_finetuning_req_bwd_progress\n");
   assert(old_bc.num_finetuning_fwd_requests() +
                  old_bc.num_finetuning_bwd_requests() <=
              1 &&
@@ -1400,6 +1568,7 @@ void RequestManager::process_finetuning_req_bwd_progress(
 }
 
 void RequestManager::record_step_profile_info(BatchConfig const &old_bc) {
+  // printf("Entering record_step_profile_info\n");
   StepProfileInfo step_profile_info;
   step_profile_info.step_idx = step_idx++;
   step_profile_info.run_idx = run_idx;
@@ -1447,6 +1616,7 @@ void RequestManager::record_step_profile_info(BatchConfig const &old_bc) {
 
 void RequestManager::process_work_from_old_batch(
     BatchConfig const &old_bc, InferenceResult const &result) {
+  // printf("Entering process_work_from_old_batch\n");
   const std::lock_guard<std::mutex> lock(request_queue_mutex);
 
   if (verbose) {
@@ -1471,6 +1641,7 @@ void RequestManager::process_work_from_old_batch(
 }
 
 BatchConfig RequestManager::prepare_next_bwd_batch(BatchConfig &new_bc) {
+  // printf("Entering prepare_next_bwd_batch\n");
   const std::lock_guard<std::mutex> lock(request_queue_mutex);
 
   if (finetuning_bwd_work_available()) {
@@ -1488,6 +1659,7 @@ BatchConfig RequestManager::prepare_next_bwd_batch(BatchConfig &new_bc) {
 BatchConfig
     RequestManager::prepare_next_fwd_batch(BatchConfig const &old_bc,
                                            InferenceResult const &result) {
+  // printf("\nEntering prepare_next_fwd_batch\n");
   const std::lock_guard<std::mutex> lock(request_queue_mutex);
 
   if (verbose) {
@@ -1506,10 +1678,16 @@ BatchConfig
       BatchConfig::max_requests_per_batch() - (int)enable_peft_finetuning;
   int num_concurrent_inf_adapters = 0;
 
+  // Step 2: evict any requests that will not fit in the kv cache
+  evict_requests_if_needed(old_bc, inference_batch_size);
+
   // Step 2: prepare the next batch for existing inference requests
   for (int req_idx = 0; req_idx < inference_batch_size; req_idx++) {
     if (!old_bc.request_completed[req_idx] &&
-        !inf_req_completed(old_bc, req_idx)) {
+        !inf_req_completed(old_bc, req_idx) &&
+        !inf_req_evicted(old_bc, req_idx)) {
+      // printf("Adding continuing inference request %zu\n",
+      //        old_bc.requestsInfo[req_idx].request_guid);
       add_continuing_inf_req_to_new_batch(
           new_bc, old_bc, num_active_req, num_concurrent_inf_adapters, req_idx);
     }
@@ -1520,11 +1698,17 @@ BatchConfig
   // Step 3: add new inference requests to the next batch if there is space and
   // they are available
   if (!pending_infr_request_queue.empty()) {
-    for (int req_idx = 0; req_idx < inference_batch_size &&
-                          new_bc.num_tokens < get_max_tokens_per_batch() &&
-                          !pending_infr_request_queue.empty();
+    // printf("pending_infr_request_queue.size(): %zu\n",
+    //        pending_infr_request_queue.size());
+    for (int req_idx = 0;
+         req_idx < inference_batch_size &&
+         new_bc.num_tokens < get_max_tokens_per_batch() &&
+         !pending_infr_request_queue.empty() &&
+         enough_space_to_add_request(new_bc, num_concurrent_inf_adapters);
          req_idx++) {
       if (new_bc.request_completed[req_idx]) {
+        // printf("Adding new inference request %zu\n",
+        //        pending_infr_request_queue.front().guid);
         add_new_inf_req(
             new_bc, num_active_req, num_concurrent_inf_adapters, req_idx);
       }
@@ -2021,7 +2205,7 @@ BeamSearchBatchConfig
       if (!pending_infr_request_queue.empty() &&
           new_bc.num_tokens < get_max_tokens_per_batch()) {
         Request new_request = pending_infr_request_queue.front();
-        pending_infr_request_queue.pop();
+        pending_infr_request_queue.pop_front();
         // all_requests[new_request.guid] = new_request;
         num_active_req++;
         new_bc.requestsInfo[i].first_token_depth_in_request = 0;

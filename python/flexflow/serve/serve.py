@@ -267,7 +267,7 @@ class LLM:
         if not os.path.isdir(folder) or not os.path.exists(folder):
             return True
         return len(os.listdir(folder)) == 1 and "rev_sha.txt" in os.listdir(folder)
-    
+
     def __need_cache_refresh(
         self, model_name: str, resource_type: CachedResourceType
     ) -> bool:
@@ -282,8 +282,15 @@ class LLM:
             bool: True if the weights or tokenizer need a refresh, False otherwise
         """
         resource_path = self.__get_resource_path(model_name, resource_type)
-        ff_revision, latest_revision = self.__get_revision_hashes(self.model_name, resource_path)
-        if self.refresh_cache or not os.path.exists(resource_path) or self.__is_empty_dir(resource_path) or ff_revision != latest_revision:
+        ff_revision, latest_revision = self.__get_revision_hashes(
+            self.model_name, resource_path
+        )
+        if (
+            self.refresh_cache
+            or not os.path.exists(resource_path)
+            or self.__is_empty_dir(resource_path)
+            or ff_revision != latest_revision
+        ):
             print(
                 f"Refreshing {resource_type} in cache for model {model_name} at path {resource_path} ..."
             )
@@ -302,8 +309,12 @@ class LLM:
         """
 
         def download_and_convert_llm_weights(model_name):
-            num_cores = os.cpu_count() -1 if os.cpu_count() > 1 else 1
-            snapshot_download(repo_id=model_name, allow_patterns="*.safetensors", max_workers=min(30, num_cores))
+            num_cores = os.cpu_count() - 1 if os.cpu_count() > 1 else 1
+            snapshot_download(
+                repo_id=model_name,
+                allow_patterns="*.safetensors",
+                max_workers=min(30, num_cores),
+            )
             hf_model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 trust_remote_code=True,
@@ -486,6 +497,7 @@ class LLM:
         self.rm = RequestManager()
         self.rm.set_max_requests_per_batch(max_requests_per_batch)
         self.rm.set_max_tokens_per_batch(max_tokens_per_batch)
+        self.rm.set_max_spec_tree_token_num(20)
         self.rm.set_max_sequence_length(max_seq_length)
         self.rm.set_max_concurrent_adapters(max_concurrent_adapters)
         self.rm.set_enable_peft_finetuning(enable_peft_finetuning)
@@ -493,9 +505,10 @@ class LLM:
         if num_bwd_layers_per_ft_step != -1:
             self.rm.set_num_layers_per_finetuning_step(num_bwd_layers_per_ft_step)
         else:
-            self.rm.set_num_layers_per_finetuning_step(
-                self.hf_config.num_hidden_layers
-            )
+            self.rm.set_num_layers_per_finetuning_step(self.hf_config.num_hidden_layers)
+
+        # Create file data loader, load weights into tensors
+        model_configs = self.config_class(self.hf_config)
 
         # Instantiate the relevant model
         self.model = self.model_class(
@@ -515,15 +528,6 @@ class LLM:
 
         # Download the weights from huggingface (if needed)
         self.download_hf_weights_if_needed()
-
-        # Create file data loader, load weights into tensors
-        model_configs = self.config_class(self.hf_config)
-
-        self.rm.set_max_spec_tree_token_num(
-            model_configs.max_spec_tree_token_num
-            if "max_spec_tree_token_num" in model_configs.__dict__
-            else 20
-        )
 
         weights_path = self.__get_resource_path(
             self.model_name, CachedResourceType.WEIGHTS

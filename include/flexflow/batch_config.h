@@ -29,6 +29,10 @@
 
 namespace FlexFlow {
 
+inline int alignTo(int x, int y) {
+  return ((x + y - 1) / y) * y;
+}
+
 class InferenceResult;
 class BeamInferenceResult;
 
@@ -58,19 +62,32 @@ public:
   static const RequestGuid INVALID_GUID = 0;
   using TokenId = int;
   BatchConfig();
+  // includes both FWD and BWD finetuning requests
   int num_active_requests() const;
+  // returns number of inference and finetuning FWD tokens
   int num_active_tokens() const;
+
+  // returns number of inference-only tokens
+  int num_inference_tokens() const;
+  int num_inference_requests() const;
+
+  // return the index where the finetuning request would be stored (i.e. last
+  // slot of the batch)
   int finetuning_request_index() const;
+  // returns the number of finetuning FWD requests, or 0 if there is none
   int num_finetuning_fwd_requests() const;
+
   int num_finetuning_fwd_tokens() const;
   int num_finetuning_bwd_requests() const;
   int num_finetuning_bwd_tokens() const;
+
   bool peft_bwd_applies_to_this_layer(int layer) const;
   static int max_requests_per_batch();
   static int max_tokens_per_batch();
   static int max_verify_tokens_per_batch();
   static int max_spec_tree_token_num();
   static int max_sequence_length();
+
   friend std::ostream &operator<<(std::ostream &os, BatchConfig const &bc);
   void print() const;
   void save_to_file(std::string const &filename) const;
@@ -110,6 +127,15 @@ public:
     int first_token_offset_in_batch;
     int num_tokens_in_batch;
     int max_length;
+
+    // paged attention
+    static constexpr size_t request_guid_size = sizeof(RequestGuid);
+    static constexpr size_t alignment = 16;
+    static constexpr size_t padding_size =
+        (alignment - (sizeof(int) * 3 + request_guid_size) % alignment) %
+        alignment;
+    static constexpr size_t padding_length = padding_size / sizeof(int);
+    int padding[padding_length] = {}; // Padding for memory pointer alignment
 
     // request id in batch config:
     int batch_config_request_id = -1;

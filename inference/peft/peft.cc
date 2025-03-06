@@ -379,6 +379,10 @@ void FlexFlow::top_level_task(Task const *task,
   } else {
     assert(false && "unknow model type");
   }
+
+  model.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
+      max_sequence_length, max_requests_per_batch, false));
+
   rm->set_num_transformer_layers(model.current_transformer_layer_id + 1);
   if (num_layers_per_finetuning_step > 0) {
     rm->set_num_layers_per_finetuning_step(num_layers_per_finetuning_step);
