@@ -335,7 +335,7 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   cudaDataType_t compute_type = cublas_data_type;
 
   assert(m->qProjSize == m->kProjSize && m->kProjSize == m->vProjSize);
-  int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
+  // int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
 
   assert(bc->num_finetuning_fwd_tokens() > 0);
   int req_idx = bc->finetuning_request_index();
@@ -395,7 +395,7 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     int n = total_tokens;
     int k = m->qProjSize;
     // before transpositions
-    int lda = m->qProjSize * tot_num_heads;
+    int lda = m->qProjSize * m->num_q_heads;
     int ldb = m->kProjSize * m->num_kv_heads;
     int ldc = num_new_tokens;
     // N.B. strides are applied before transpose operations
@@ -403,12 +403,11 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     int strideB = m->kProjSize;
     int strideC = num_new_tokens * total_tokens;
 
-    // matrix A: devQKVProjArray
-    // matrix A's layout: [qProjSize, tot_num_heads, num_new_tokens]
-    // To get query projection, skip over Q entries from previous requests
-    DT const *A = static_cast<DT *>(m->devQKVProjArray) +
-                  tokens_previous_requests * m->qProjSize *
-                      (m->num_q_heads + 2 * m->num_kv_heads);
+    // matrix A: query_activation_buffer
+    // matrix A's layout: [qProjSize, num_q_heads, tot_peft_tokens]
+    // Skip over entries from previous PEFT fwd steps
+    DT const *A = static_cast<DT *>(m->query_activation_buffer) +
+                  tokens_previous_steps * m->qProjSize * m->num_q_heads;
     // matrix B: key cache (peft)
     // matrix B's layout: [kProjSize, num_kv_heads, total_tokens]
     // To get B, skip over K entries from previous requests (all heads +
@@ -416,7 +415,7 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     DT const *B = static_cast<DT *>(m->keyCachePeft);
     // matrix C: qk_prods (current req only)
     // matrix C's layout: [num_new_tokens, total_tokens, num_q_heads]
-    DT *C = static_cast<DT *>(m->qk_prods);
+    DT *C = static_cast<DT *>(m->handle.workSpace);
     run_batched_matmul<DT>(m,
                            m->handle.peft_blas,
                            CUBLAS_OP_T,
@@ -447,7 +446,7 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
                            1);
     if (m->inference_debugging) {
       std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods";
-      save_tensor(static_cast<DT const *>(m->qk_prods),
+      save_tensor(static_cast<DT const *>(m->handle.workSpace),
                   num_new_tokens * total_tokens * m->num_q_heads,
                   fpath.c_str());
     }
@@ -459,7 +458,7 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   {
     // matrix C: qk_prods (current req only)
     // matrix C's layout: [num_new_tokens, total_tokens, num_q_heads]
-    DT *C = static_cast<DT *>(m->qk_prods);
+    DT *C = static_cast<DT *>(m->handle.workSpace);
     if (*m->position_bias) {
       size_t parallelism = m->num_q_heads * total_tokens * num_new_tokens;
       apply_position_bias_qkprd<<<GET_BLOCKS(parallelism),
@@ -482,7 +481,7 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     if (entries_above_diagonal > 0) {
       // matrix C: qk_prods (current req only)
       // matrix C's layout: [num_new_tokens, total_tokens, num_q_heads]
-      DT *C = static_cast<DT *>(m->qk_prods);
+      DT *C = static_cast<DT *>(m->handle.workSpace);
       size_t parallelism = m->num_q_heads * entries_above_diagonal;
       fill_entries_above_diagonal<<<GET_BLOCKS(parallelism),
                                     min((size_t)CUDA_NUM_THREADS, parallelism),
@@ -496,7 +495,7 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     }
     if (m->inference_debugging) {
       std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods.masked";
-      save_tensor(static_cast<DT const *>(m->qk_prods),
+      save_tensor(static_cast<DT const *>(m->handle.workSpace),
                   num_new_tokens * total_tokens * m->num_q_heads,
                   fpath.c_str());
     }
@@ -527,7 +526,7 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     float softmax_alpha = 1.0f, softmax_beta = 0.0f;
     // matrix C: qk_prods (current req only)
     // matrix C's layout: [num_new_tokens, total_tokens, num_q_heads]
-    DT *C = static_cast<DT *>(m->qk_prods);
+    DT *C = static_cast<DT *>(m->handle.workSpace);
     // matrix C_softmax: qk_prods_softmax (current req only)
     // matrix C_softmax's layout: [num_new_tokens, total_tokens, num_q_heads]
     DT *C_softmax = static_cast<DT *>(m->qk_prods_softmax);
@@ -1080,32 +1079,6 @@ void update_kv_cache_kernel_peft(IncMultiHeadSelfAttentionMeta const *m,
 }
 
 template <typename DT>
-__global__ void produce_output_kernel(DT const *input_ptr,
-                                      DT *output_ptr,
-                                      int parallelism) {
-  CUDA_KERNEL_LOOP(idx, parallelism) {
-    output_ptr[idx] = static_cast<DT>(input_ptr[idx]);
-  }
-}
-
-template <typename DT>
-void produce_output(IncMultiHeadSelfAttentionMeta const *m,
-                    BatchConfig const *bc,
-                    DT *output_ptr,
-                    cudaStream_t stream) {
-  int const num_tokens = bc->num_inference_tokens();
-  if (num_tokens == 0) {
-    return;
-  }
-  int parallelism = m->vProjSize * m->num_q_heads * num_tokens;
-  produce_output_kernel<<<GET_BLOCKS(parallelism),
-                          min(CUDA_NUM_THREADS, parallelism),
-                          0,
-                          stream>>>(
-      static_cast<DT *>(m->outputTmp), output_ptr, parallelism);
-}
-
-template <typename DT>
 void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
                                BatchConfig const *bc,
                                int shard_id,
@@ -1126,8 +1099,7 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
   assert(bc->num_inference_tokens() > 0);
 
   half *q = static_cast<half *>(m->queryTmp),
-       *kv = static_cast<half *>(m->kvCache),
-       *o = static_cast<half *>(m->outputTmp);
+       *kv = static_cast<half *>(m->kvCache), *o = (half *)output_ptr;
   assert(q != nullptr && "q is null!");
   assert(kv != nullptr && "kv is null!");
   assert(o != nullptr && "o is null!");
@@ -1223,8 +1195,6 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
                                std::string(cudaGetErrorString(result)));
     }
   });
-
-  produce_output(m, bc, output_ptr, stream);
 }
 
 template <typename DT>
@@ -1418,28 +1388,18 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   assert(num_tokens == num_total_tokens);
   assert(num_total_tokens == bc->requestsInfo[i].max_length);
   assert(m->qProjSize == m->kProjSize && m->kProjSize == m->vProjSize);
-  assert(bc->requestsInfo[i].first_token_offset_in_batch == 0);
+  // assert(bc->requestsInfo[i].first_token_offset_in_batch == 0);
 
-  // Step 1: copy gradient before final projection into workspace
-  {
-    int m_ = m->vProjSize * m->num_q_heads;
-    int n_ = num_tokens;
-    DT *C = static_cast<DT *>(m->handle.workSpace);
-    cudaMemcpyAsync(C,
-                    output_grad_ptr +
-                        bc->requestsInfo[i].first_token_offset_in_batch *
-                            m->oProjSize,
-                    m_ * n_ * sizeof(DT),
-                    cudaMemcpyDeviceToDevice,
-                    peft_stream);
-    if (m->inference_debugging) {
-      // save result to file for checking
-      std::string filename =
-          get_peft_dbg_folder(m, shard_id) + ".o_proj.input_gradient_0";
-      save_tensor(C, m_ * n_, filename.c_str());
-    }
+  if (m->inference_debugging) {
+    // save result to file for checking
+    std::string filename =
+        get_peft_dbg_folder(m, shard_id) + ".o_proj.input_gradient_0";
+    save_tensor(output_grad_ptr,
+                m->vProjSize * m->num_q_heads * num_tokens,
+                filename.c_str());
   }
-  // Step 2: compute gradients w.r.t. value
+
+  // Step 1: compute gradients w.r.t. value
   {
     float alpha = 1.0f, beta = 0.0f;
     // matrix A: qk_prods_softmax
@@ -1447,7 +1407,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     DT const *A = static_cast<DT *>(m->qk_prods_softmax);
     // matrix B: attn_heads gradients
     // matrix B's layout: [vProjSize * num_q_heads, num_new_tokens]
-    DT const *B = static_cast<DT *>(m->handle.workSpace);
+    DT const *B = output_grad_ptr;
     // matrix C: gradients for value (saved as part of m->devQKVProjArray)
     // matrix C's layout: [num_tokens, qProjsize * num_q_heads, 3]
     // note that we first need to compute the gradients wrt each q_heads, then
@@ -1502,12 +1462,12 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
       save_tensor(A, m_ * k_ * m->num_q_heads, filename2.c_str());
     }
   }
-  // Step 3: compute gradients w.r.t. the qk_prods_softmax tensor
+  // Step 2: compute gradients w.r.t. the qk_prods_softmax tensor
   {
     float alpha = 1.0f, beta = 0.0f;
     // matrix A: attn_heads gradients
     // matrix A's layout: [vProjSize * num_q_heads, num_new_tokens]
-    DT const *A = static_cast<DT *>(m->handle.workSpace);
+    DT const *A = output_grad_ptr;
     // matrix B: value cache
     // matrix B's layout: [vProjSize * num_kv_heads, max_num_tokens, 1]
     DT const *B = static_cast<DT *>(m->valueCachePeft);
@@ -1568,7 +1528,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                   filename2.c_str());
     }
   }
-  // Step 4: softmax backpropagation
+  // Step 3: softmax backpropagation
   {
     float alpha = 1.0f, beta = 0.0f;
     int n_param = m->num_q_heads;
@@ -1592,10 +1552,10 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                                     m->qk_prods_softmax,
                                     &beta,
                                     m->qk_tensor,
-                                    m->qk_prods));
+                                    m->handle.workSpace));
 
     if (m->inference_debugging) {
-      DT *C = static_cast<DT *>(m->qk_prods);
+      DT *C = static_cast<DT *>(m->handle.workSpace);
       std::string filename =
           get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad_in";
       save_tensor(
@@ -1615,7 +1575,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                                     min((size_t)CUDA_NUM_THREADS, parallelism),
                                     0,
                                     peft_stream>>>(
-          static_cast<DT *>(m->qk_prods),
+          static_cast<DT *>(m->handle.workSpace),
           num_tokens,
           num_tokens,
           m->num_q_heads,
@@ -1623,14 +1583,14 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
           DT(0.0f));
     }
     if (m->inference_debugging) {
-      DT *C = static_cast<DT *>(m->qk_prods);
+      DT *C = static_cast<DT *>(m->handle.workSpace);
       std::string filename =
           get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad_in.masked";
       save_tensor(
           C, num_tokens * num_tokens * m->num_q_heads, filename.c_str());
     }
   }
-  // Step 5: compute gradients w.r.t. key
+  // Step 4: compute gradients w.r.t. key
   {
     float alpha = 1.0f, beta = 0.0f;
     if (*m->qk_prod_scaling) {
@@ -1638,7 +1598,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     }
     // matrix A: gradients w.r.t. qk_prods
     // matrix A's layout: [num_new_tokens, num_tokens, num_q_heads]
-    DT const *A = static_cast<DT *>(m->qk_prods);
+    DT const *A = static_cast<DT *>(m->handle.workSpace);
     // matrix B: query activation (in query_activation_buffer)
     // matrix B's layout: [m->qProjSize * num_q_heads, num_new_tokens]
     DT const *B = static_cast<DT *>(m->query_activation_buffer);
@@ -1696,7 +1656,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
           C, num_tokens * (m->qProjSize * m->num_q_heads), filename2.c_str());
     }
   }
-  // Step 6: compute gradients w.r.t query
+  // Step 5: compute gradients w.r.t query
   {
     float alpha = 1.0f, beta = 0.0f;
     if (*m->qk_prod_scaling) {
@@ -1704,7 +1664,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     }
     // matrix A: gradients w.r.t. qk_prods
     // matrix A's layout: [num_new_tokens, num_tokens, num_q_heads]
-    DT const *A = static_cast<DT *>(m->qk_prods);
+    DT const *A = static_cast<DT *>(m->handle.workSpace);
     // matrix B: key cache
     // matrix B's layout: [vProjSize * num_kv_heads, max_num_tokens, num_req]
     DT const *B = static_cast<DT *>(m->keyCachePeft);
@@ -1759,7 +1719,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     }
   }
 
-  // Step 7: perform rotary position embeddings (RoPE) bwd
+  // Step 6: perform rotary position embeddings (RoPE) bwd
   {
     if (m->rotary_embedding_meta->apply_rotary_embedding) {
       checkCUDA(cudaMemcpyAsync(m->peft_token_infos_device,
@@ -1813,7 +1773,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     }
   }
 
-  // Step 8: compute gradients w.r.t. input
+  // Step 7: compute gradients w.r.t. input
   {
     float alpha = 1.0f, beta = 0.0f;
     if (!m->reset_input_grads[0]) {
@@ -1824,8 +1784,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     DT const *B = static_cast<DT *>(m->devQKVProjArrayBWD);
     // matrix C: gradients w.r.t. input
     // matrix C's layout: [qProjsize * tot_num_heads, num_tokens]
-    DT *C = input_grad_ptr + bc->requestsInfo[i].first_token_offset_in_batch *
-                                 m->qProjSize * m->num_q_heads;
+    DT *C = input_grad_ptr;
     int n_ = num_tokens;
     int k_ = m->qProjSize * (m->num_q_heads + 2 * m->num_kv_heads);
 
@@ -1953,7 +1912,9 @@ void IncMultiHeadSelfAttention::peft_bwd_kernel_wrapper(
 IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     FFHandler handler,
     IncMultiHeadSelfAttention const *attn,
-    MemoryAllocator &gpu_mem_allocator,
+    MemoryAllocator &inf_mem_allocator,
+    MemoryAllocator &kv_cache_mem_allocator,
+    MemoryAllocator &peft_mem_allocator,
     int _num_q_heads,
     int _num_kv_heads)
     : IncMultiHeadSelfAttentionMeta(handler,
@@ -1968,7 +1929,9 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                                     attn->qk_prod_scaling,
                                     attn->position_bias,
                                     attn->scaling_factor,
-                                    gpu_mem_allocator,
+                                    inf_mem_allocator,
+                                    kv_cache_mem_allocator,
+                                    peft_mem_allocator,
                                     attn->num_q_heads,
                                     attn->num_kv_heads,
                                     _num_q_heads,
@@ -1990,7 +1953,9 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     bool _qk_prod_scaling,
     bool _position_bias,
     float _scaling_factor,
-    MemoryAllocator &gpu_mem_allocator,
+    MemoryAllocator &inf_mem_allocator,
+    MemoryAllocator &kv_cache_mem_allocator,
+    MemoryAllocator &peft_mem_allocator,
     int _global_num_q_heads,
     int _global_num_kv_heads,
     int _num_q_heads,
@@ -2038,22 +2003,26 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     assert(infer_mode == INC_DECODING_MODE);
   }
 
-  size_t totalSize = 0;
+  size_t inf_instance_size = 0;
+  size_t kv_cache_instance_size = 0;
+  size_t peft_instance_size = 0;
 
   // Compute total GPU memory size needed
   {
     // 1. GQA pointers for batch matmul. Used by PEFT and spec_inc if
     // num_q_heads > num_kv_heads
     if (num_q_heads > num_kv_heads &&
-        (enable_peft_finetuning || infer_mode == BEAM_SEARCH_MODE)) {
+        (infer_mode == BEAM_SEARCH_MODE || enable_peft_finetuning)) {
       assert(num_q_heads % num_kv_heads == 0 &&
              "num_q_heads must be divisible by num_kv_heads");
       assert(attn->data_type == DT_FLOAT ||
              attn->data_type == DT_HALF && "Unsupported data type");
       gqa_ptr_array_size = num_q_heads * sizeof(void *);
-      totalSize += 3 * gqa_ptr_array_size; // fwd
-      if (enable_peft_finetuning) {
-        totalSize += 3 * gqa_ptr_array_size; // bwd
+      if (infer_mode == BEAM_SEARCH_MODE) {
+        inf_instance_size += 3 * gqa_ptr_array_size; // fwd
+      } else if (enable_peft_finetuning) {
+        inf_instance_size += 3 * gqa_ptr_array_size;  // fwd
+        peft_instance_size += 3 * gqa_ptr_array_size; // bwd
       }
     }
 
@@ -2069,12 +2038,13 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                  (BatchConfig::max_sequence_length() +
                   BatchConfig::max_spec_tree_token_num()));
     }
-    totalSize += (key_cache_size + value_cache_size) * size_of_dt;
+    kv_cache_instance_size += (key_cache_size + value_cache_size) * size_of_dt;
     if (enable_peft_finetuning) {
       // add kv cache for single sequence
       peft_key_cache_size = peft_value_cache_size =
           num_kv_heads * kProjSize * BatchConfig::max_sequence_length();
-      totalSize += (peft_key_cache_size + peft_value_cache_size) * size_of_dt;
+      peft_instance_size +=
+          (peft_key_cache_size + peft_value_cache_size) * size_of_dt;
     }
 
     // 3. buffers for intermediate results
@@ -2084,40 +2054,40 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                                    : BatchConfig::max_tokens_per_batch();
     // devQKVProjArray
     qkv_max_proj_size = qProjSize * tot_num_heads * max_tokens_per_batch;
-    totalSize += qkv_max_proj_size * size_of_dt;
+    inf_instance_size += qkv_max_proj_size * size_of_dt;
     if (enable_peft_finetuning) {
       qkv_max_proj_size_bwd =
           qProjSize * tot_num_heads * BatchConfig::max_sequence_length();
-      totalSize += qkv_max_proj_size_bwd * size_of_dt;
+
+      peft_instance_size += qkv_max_proj_size_bwd * size_of_dt;
     }
     // queryTmp and outputTmp: only for paged attention
     if (infer_mode == INC_DECODING_MODE) {
       query_tmp_size = num_q_heads * qProjSize * max_tokens_per_batch;
-      output_tmp_size = max_tokens_per_batch * num_q_heads * vProjSize;
-      totalSize += (query_tmp_size + output_tmp_size) * size_of_dt;
+      inf_instance_size += (query_tmp_size)*size_of_dt;
     }
     // complex_input & complex_input_bwd
     complex_size = max_tokens_per_batch * qProjSize *
                    (num_q_heads + num_kv_heads) /
                    2; // only used for Q and K, not V
-    totalSize += complex_size * sizeof(cuFloatComplex);
+    inf_instance_size += complex_size * sizeof(cuFloatComplex);
     if (enable_peft_finetuning) {
       complex_size_bwd = BatchConfig::max_sequence_length() * qProjSize *
                          (num_q_heads + num_kv_heads) /
                          2; // only used for Q and K, not V
-      totalSize += complex_size_bwd * sizeof(cuFloatComplex);
+      peft_instance_size += complex_size_bwd * sizeof(cuFloatComplex);
     }
     // QK prods and QK prods (softmax)
     if (infer_mode == BEAM_SEARCH_MODE) {
       qk_prod_size = max_tokens_per_batch * BatchConfig::max_sequence_length() *
                      num_q_heads;
-      totalSize += 2 * qk_prod_size * size_of_dt;
+      inf_instance_size += 2 * qk_prod_size * size_of_dt;
     } else if (enable_peft_finetuning) {
       // only need one copy as they can be reused by PEFT fwd and PEFT bwd, as
       // they never run concurrently
       qk_prod_size = BatchConfig::max_sequence_length() *
                      BatchConfig::max_sequence_length() * num_q_heads;
-      totalSize += 2 * qk_prod_size * size_of_dt;
+      peft_instance_size += qk_prod_size * size_of_dt;
     }
     // PEFT partial results buffers
     if (enable_peft_finetuning) {
@@ -2132,8 +2102,9 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
               BatchConfig::max_sequence_length());
       peft_token_infos_size = sizeof(BatchConfig::PerTokenInfo) *
                               BatchConfig::max_sequence_length();
-      totalSize += allocated_peft_buffer_size1 + allocated_peft_buffer_size2;
-      totalSize += peft_token_infos_size;
+      peft_instance_size +=
+          allocated_peft_buffer_size1 + allocated_peft_buffer_size2;
+      peft_instance_size += peft_token_infos_size;
     }
 
     // 4. offload: TBD
@@ -2143,8 +2114,14 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   }
 
   // Allocate chunk of memory
-  gpu_mem_allocator.create_legion_instance(
-      reserveInst, totalSize, "IncMultiHeadSelfAttentionMeta");
+  inf_mem_allocator.create_legion_instance(
+      inf_instance, inf_instance_size, "IncMultiHeadSelfAttentionMeta (inf)");
+  kv_cache_mem_allocator.create_legion_instance(
+      kv_cache_instance, kv_cache_instance_size, "KV Cache");
+  peft_mem_allocator.create_legion_instance(
+      peft_instance,
+      peft_instance_size,
+      "IncMultiHeadSelfAttentionMeta (peft)");
 
   // Assign pointers from chunk of memory
   {
@@ -2152,39 +2129,39 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     if (num_q_heads > num_kv_heads) {
       assert(num_q_heads % num_kv_heads == 0 &&
              "Num Q heads must be a multiple of num KV heads");
-      d_A_array = (void **)gpu_mem_allocator.allocate_instance_untyped(
+      d_A_array = (void **)inf_mem_allocator.allocate_instance_untyped(
           gqa_ptr_array_size);
-      d_B_array = (void **)gpu_mem_allocator.allocate_instance_untyped(
+      d_B_array = (void **)inf_mem_allocator.allocate_instance_untyped(
           gqa_ptr_array_size);
-      d_C_array = (void **)gpu_mem_allocator.allocate_instance_untyped(
+      d_C_array = (void **)inf_mem_allocator.allocate_instance_untyped(
           gqa_ptr_array_size);
       if (enable_peft_finetuning) {
-        d_A_array2 = (void **)gpu_mem_allocator.allocate_instance_untyped(
+        d_A_array2 = (void **)peft_mem_allocator.allocate_instance_untyped(
             gqa_ptr_array_size);
-        d_B_array2 = (void **)gpu_mem_allocator.allocate_instance_untyped(
+        d_B_array2 = (void **)peft_mem_allocator.allocate_instance_untyped(
             gqa_ptr_array_size);
-        d_C_array2 = (void **)gpu_mem_allocator.allocate_instance_untyped(
+        d_C_array2 = (void **)peft_mem_allocator.allocate_instance_untyped(
             gqa_ptr_array_size);
       }
     }
 
     // KV cache
     if (infer_mode == INC_DECODING_MODE) {
-      kvCache = gpu_mem_allocator.allocate_instance_untyped(
+      kvCache = kv_cache_mem_allocator.allocate_instance_untyped(
           (key_cache_size + value_cache_size) * size_of_dt);
       keyCache = valueCache = nullptr;
     } else {
       kvCache = nullptr;
-      keyCache = gpu_mem_allocator.allocate_instance_untyped(key_cache_size *
-                                                             size_of_dt);
-      valueCache = gpu_mem_allocator.allocate_instance_untyped(
+      keyCache = kv_cache_mem_allocator.allocate_instance_untyped(
+          key_cache_size * size_of_dt);
+      valueCache = kv_cache_mem_allocator.allocate_instance_untyped(
           value_cache_size * size_of_dt);
     }
     if (enable_peft_finetuning) {
       assert(infer_mode == INC_DECODING_MODE);
-      keyCachePeft = gpu_mem_allocator.allocate_instance_untyped(
+      keyCachePeft = peft_mem_allocator.allocate_instance_untyped(
           peft_key_cache_size * size_of_dt);
-      valueCachePeft = gpu_mem_allocator.allocate_instance_untyped(
+      valueCachePeft = peft_mem_allocator.allocate_instance_untyped(
           peft_value_cache_size * size_of_dt);
     } else {
       keyCachePeft = valueCachePeft = nullptr;
@@ -2193,41 +2170,43 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     // intermediate buffers
     // devQKVProjArray: used to store QKV proj so that we can modify them (apply
     // rope, etc)
-    devQKVProjArray = gpu_mem_allocator.allocate_instance_untyped(
+    devQKVProjArray = inf_mem_allocator.allocate_instance_untyped(
         qkv_max_proj_size * size_of_dt);
     // devQKVProjArrayBWD
     if (enable_peft_finetuning) {
-      devQKVProjArrayBWD = gpu_mem_allocator.allocate_instance_untyped(
+      devQKVProjArrayBWD = peft_mem_allocator.allocate_instance_untyped(
           qkv_max_proj_size_bwd * size_of_dt);
     }
     // queryTmp and outputTmp: only for paged attention
     if (infer_mode == INC_DECODING_MODE) {
-      queryTmp = gpu_mem_allocator.allocate_instance_untyped(query_tmp_size *
+      queryTmp = inf_mem_allocator.allocate_instance_untyped(query_tmp_size *
                                                              size_of_dt);
-      outputTmp = gpu_mem_allocator.allocate_instance_untyped(output_tmp_size *
-                                                              size_of_dt);
     }
     // complex input
     complex_input =
-        gpu_mem_allocator.allocate_instance<cuFloatComplex>(complex_size);
+        inf_mem_allocator.allocate_instance<cuFloatComplex>(complex_size);
     complex_input_bwd =
-        gpu_mem_allocator.allocate_instance<cuFloatComplex>(complex_size_bwd);
+        peft_mem_allocator.allocate_instance<cuFloatComplex>(complex_size_bwd);
     // qk_prods, qk_prods_softmax
-    if (infer_mode == BEAM_SEARCH_MODE || enable_peft_finetuning) {
-      qk_prods = gpu_mem_allocator.allocate_instance_untyped(qk_prod_size *
+    if (infer_mode == BEAM_SEARCH_MODE) {
+      qk_prods = inf_mem_allocator.allocate_instance_untyped(qk_prod_size *
                                                              size_of_dt);
-      qk_prods_softmax = gpu_mem_allocator.allocate_instance_untyped(
+      qk_prods_softmax = inf_mem_allocator.allocate_instance_untyped(
+          qk_prod_size * size_of_dt);
+    }
+    if (enable_peft_finetuning) {
+      qk_prods_softmax = peft_mem_allocator.allocate_instance_untyped(
           qk_prod_size * size_of_dt);
     }
     // peft partial result buffers
     if (enable_peft_finetuning) {
-      query_activation_buffer = gpu_mem_allocator.allocate_instance_untyped(
+      query_activation_buffer = peft_mem_allocator.allocate_instance_untyped(
           allocated_peft_buffer_size1);
-      softmax_activation_buffer = gpu_mem_allocator.allocate_instance_untyped(
+      softmax_activation_buffer = peft_mem_allocator.allocate_instance_untyped(
           allocated_peft_buffer_size2);
-      peft_token_infos_device = (BatchConfig::PerTokenInfo *)
-                                    gpu_mem_allocator.allocate_instance_untyped(
-                                        peft_token_infos_size);
+      peft_token_infos_device =
+          (BatchConfig::PerTokenInfo *)peft_mem_allocator
+              .allocate_instance_untyped(peft_token_infos_size);
     }
 
     token_infos = static_cast<BatchConfig::PerTokenInfo *>(
@@ -2241,15 +2220,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     if (quantization_type != DT_NONE) {
       assert(offload);
     }
-    if (!offload) {
-      assert(gpu_mem_allocator.reserved_total_size ==
-             gpu_mem_allocator.reserved_allocated_size);
-    }
   }
-
-  // ensure we have consumed the allocated memory
-  assert(gpu_mem_allocator.reserved_total_size ==
-         gpu_mem_allocator.reserved_allocated_size);
 
   // set attention constants
   // std::cerr << "Enabling incr attention metadata for handler incr meta: "
@@ -2263,8 +2234,14 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
 }
 
 IncMultiHeadSelfAttentionMeta::~IncMultiHeadSelfAttentionMeta(void) {
-  if (reserveInst != Realm::RegionInstance::NO_INST) {
-    reserveInst.destroy();
+  if (inf_instance != Realm::RegionInstance::NO_INST) {
+    inf_instance.destroy();
+  }
+  if (kv_cache_instance != Realm::RegionInstance::NO_INST) {
+    kv_cache_instance.destroy();
+  }
+  if (peft_instance != Realm::RegionInstance::NO_INST) {
+    peft_instance.destroy();
   }
 }
 
@@ -2355,18 +2332,6 @@ template void
         IncMultiHeadSelfAttentionMeta const *m,
         BatchConfig const *bc,
         cudaStream_t stream);
-
-template void Kernels::IncMultiHeadAttention::produce_output<float>(
-    IncMultiHeadSelfAttentionMeta const *m,
-    BatchConfig const *bc,
-    float *output_ptr,
-    cudaStream_t stream);
-
-template void Kernels::IncMultiHeadAttention::produce_output<half>(
-    IncMultiHeadSelfAttentionMeta const *m,
-    BatchConfig const *bc,
-    half *output_ptr,
-    cudaStream_t stream);
 
 template __global__ void
     Kernels::IncMultiHeadAttention::apply_position_bias_qkprd<float>(

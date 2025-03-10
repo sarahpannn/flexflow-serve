@@ -98,7 +98,7 @@ struct Request {
   struct PeftFinetuningInfo {
     FinetuningStatus status = FORWARD_PHASE;
     std::string dataset_filepath;
-    int max_training_steps = 1;
+    int max_training_epochs = 1;
     // overall state
     int completed_training_steps = 0;
     // fwd state
@@ -280,6 +280,7 @@ public:
                                   int tensor_parallelism_degree,
                                   int max_requests_per_batch,
                                   int max_tokens_per_batch,
+                                  int num_kv_cache_slots,
                                   double arrival_rate,
                                   int num_warmup_requests);
   BatchConfig prepare_next_bwd_batch(BatchConfig &new_bc);
@@ -455,6 +456,7 @@ private:
     double start_time, finish_time;
     double registration_time, first_token_time;
     bool first_token_time_set = false;
+    int num_evictions = 0;
   };
   std::unordered_map<RequestGuid, ProfileInfo> profiling_requests;
   double total_request_run_time;
