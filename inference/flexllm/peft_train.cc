@@ -234,8 +234,8 @@ std::vector<Request> load_requests(std::string prompt_file_path,
     std::cerr << "Error opening prompt file " << prompt_file_path << std::endl;
     std::cerr << "Current working directory: "
               << std::filesystem::current_path() << std::endl;
-    assert(!file_handle.good() && "Error opening prompt file!");
   }
+  assert(file_handle.good() && "Error opening prompt file!");
   nlohmann::ordered_json prompt_json;
   try {
     prompt_json = nlohmann::ordered_json::parse(file_handle,

@@ -131,14 +131,14 @@ rm -rf inference/prompt inference/output inference/inf_test_configs || true
 # Create test prompt file
 mkdir -p ./inference/prompt
 echo '["Three tips for staying healthy are: "]' > ./inference/prompt/test.json
-
+# Create output folder
+mkdir -p ./inference/output
 
 ############## Run inference in flexflow-serve ##############
 
 echo "Running inference in flexflow-serve (C++)..."
 
 # Generate test configs
-rm -rf ./inference/inf_test_configs/*.json || true
 python ./tests/inference/generate_inf_test_configs.py
 
 # Loop through .json files in the ./inference/inf_test_configs dir 
