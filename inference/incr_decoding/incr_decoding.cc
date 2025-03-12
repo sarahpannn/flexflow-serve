@@ -220,9 +220,9 @@ std::vector<Request> load_requests(std::string prompt_file_path,
     std::cerr << "Error: JSON file is null!" << std::endl;
     assert(false);
   } else if (prompt_json.is_array()) {
-    return load_prompt_list(prompt_file_path, max_length_if_needed);
+    return load_prompt_list(prompt_json, max_length_if_needed);
   } else if (prompt_json.is_object()) {
-    return load_trace(prompt_file_path);
+    return load_trace(prompt_json);
   } else {
     std::cerr << "JSON is neither an array nor an object!" << std::endl;
     assert(false);
