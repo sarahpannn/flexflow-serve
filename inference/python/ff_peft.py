@@ -61,9 +61,9 @@ def get_configs():
         }
         model_configs = {
             # required parameters
-            "base_model": "JackFram/llama-160m",
-            "inference_peft_model_id": "goliaro/llama-160m-lora",
-            "finetuning_peft_model_id": "goliaro/llama-160m-lora",
+            "base_model": "unsloth/Llama-3.2-1B-Instruct",
+            "inference_peft_model_id": "goliaro/llama-3.2-1b-lora",
+            "finetuning_peft_model_id": "goliaro/llama-3.2-1b-lora",
             # optional parameters
             "cache_path": os.environ.get("FF_CACHE_PATH", ""),
             "refresh_cache": False,

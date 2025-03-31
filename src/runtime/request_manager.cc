@@ -550,11 +550,25 @@ PEFTModelID *
   // match
   for (int i = 0; i < peft_config.target_modules.size(); i++) {
     bool found = false;
+    std::string target_name = peft_config.target_modules[i];
+
     for (auto const &pair : base_layer_to_peft_layer) {
       Layer *base_layer = pair.first;
-      if (base_layer->name != nullptr && strlen(base_layer->name) > 0 &&
-          std::string(base_layer->name).find(peft_config.target_modules[0]) !=
-              std::string::npos) {
+      // Ensure base layer name is valid
+      if (base_layer->name == nullptr || strlen(base_layer->name) == 0) {
+        continue;
+      }
+
+      std::string base_layer_name(base_layer->name);
+
+      if ((target_name == "q_proj" || target_name == "k_proj" ||
+           target_name == "v_proj") &&
+          base_layer_name.find("qkv_proj") != std::string::npos) {
+        found = true;
+        break;
+      }
+
+      if (base_layer_name.find(target_name) != std::string::npos) {
         found = true;
         break;
       }
