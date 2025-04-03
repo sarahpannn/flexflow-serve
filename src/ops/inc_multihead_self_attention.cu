@@ -1858,12 +1858,16 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
     torch::save(tensor, fpath.c_str());
   }
 
+  int peft_req_idx = -1;
+  if (bc->num_finetuning_fwd_requests() > 0) {
+    peft_req_idx = bc->finetuning_request_index();
+  }
   AttnGeneralParams general_params = {
       .num_q_heads = m->num_q_heads,
       .num_kv_heads = m->num_kv_heads,
       .head_dim = m->qProjSize,
       .num_tokens = bc->num_active_tokens(),
-      .peft_req_idx = bc->finetuning_request_index(),
+      .peft_req_idx = peft_req_idx,
       .tokenInfos = m->token_infos,
       .kv_indptr = m->handle.incr_attention_metadata->kv_indptr,
       .kv_page_indices = m->handle.incr_attention_metadata->kv_indices,
