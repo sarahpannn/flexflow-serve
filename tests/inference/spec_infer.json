@@ -1,0 +1,37 @@
+{
+  "num_gpus": 2,
+  "memory_per_gpu": 14000,
+  "zero_copy_memory_per_node": 40000,
+  "num_cpus": 4,
+  "legion_utility_processors": 4,
+  "data_parallelism_degree": 1,
+  "tensor_parallelism_degree": 1,
+  "pipeline_parallelism_degree": 2,
+  "offload": false,
+  "offload_reserve_space_size": 8192,
+  "use_4bit_quantization": false,
+  "use_8bit_quantization": false,
+  "enable_peft": false,
+  "profiling": false,
+  "benchmarking": false,
+  "inference_debugging": false,
+  "fusion": true,
+  "llm_model": "meta-llama/Llama-2-7b-hf",
+  "cache_path": "",
+  "refresh_cache": false,
+  "full_precision": false,
+  "ssms": [
+    {
+      "ssm_model": "JackFram/llama-160m",
+      "cache_path": "",
+      "refresh_cache": false,
+      "full_precision": false
+    }
+  ],
+  "prompt": "",
+  "output_file": "",
+  "max_requests_per_batch": 4,
+  "max_seq_length": 256,
+  "max_tokens_per_batch": 64,
+  "max_length": 128
+}
